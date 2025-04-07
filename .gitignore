@@ -1,3 +1,6 @@
+# Google API token
+token.json
+
 # Logs
 logs
 *.log
