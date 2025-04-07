@@ -148,7 +148,7 @@ async function obsConnect() {
 async function checkLiveStreams(broadcastStatus) {
   try {
     const response = await youtube.liveBroadcasts.list({
-      part: ["id"], // Only need the ID part
+      part: ["id,snippet"], // Get the name from snippet for sorting
       broadcastStatus: broadcastStatus, // Filter for active streams
       // mine: true, // Only works with OAuth; omit if using API key and add channelId
       // // channelId: 'YOUR_CHANNEL_ID', // Uncomment and replace if using API key
@@ -156,6 +156,16 @@ async function checkLiveStreams(broadcastStatus) {
     });
 
     const liveStreams = response.data.items || []; // Default to empty array if no items
+
+    // Sort array: Place streams with "連邦側" in title first
+    liveStreams.sort((a, b) => {
+      const titleA = a.snippet.title || "";
+      const titleB = b.snippet.title || "";
+      if (titleA.includes("連邦側") && !titleB.includes("連邦側")) return -1; // a comes first
+      if (!titleA.includes("連邦側") && titleB.includes("連邦側")) return 1; // b comes first
+      return 0; // No change if both or neither have "連邦側"
+    });
+
     const liveStreamIds = liveStreams.map((stream) => stream.id); // Extract IDs
 
     return liveStreamIds; // Return array of IDs
