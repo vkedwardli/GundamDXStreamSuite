@@ -6,9 +6,16 @@ const Youtube = require("youtube-api");
 const { LiveChat } = require("youtube-chat");
 const http = require("http");
 const path = require("path");
+const os = require("os");
+const { exec } = require("child_process");
 const url = require("url");
+const { scheduler } = require("node:timers/promises");
+const schedule = require("node-schedule");
 require("dotenv").config();
 
+// Path to OBS directory and executable
+const obsDir = "C:\\Program Files\\obs-studio\\bin\\64bit";
+const obsPath = `${obsDir}\\obs64.exe`; // Full path to executable
 const obs = new OBSWebSocket();
 
 // OAuth 2.0 Client Configuration
@@ -91,14 +98,14 @@ const server = http.createServer((req, res) => {
 
 const io = require("socket.io")(server);
 let socketClient = null;
-io.on("connection", (client) => {
-  console.log("Client connected");
-  socketClient = client;
-  client.on("disconnect", () => {
-    socketClient = null;
-    console.log("Client disconnected");
-  });
-});
+
+// Override console.log to send to all clients
+const originalConsoleLog = console.log;
+console.log = function (...args) {
+  const message = args.join(" ");
+  io.emit("console", message);
+  originalConsoleLog.apply(console, args);
+};
 server.listen(3000, () => console.log("Server running on port 3000"));
 
 // Authorize OAuth 2.0
@@ -135,12 +142,14 @@ oAuth2Client.on("tokens", async (tokens) => {
 });
 
 // OBS WebSocket connection
-async function obsConnect() {
+async function obsConnect(callback) {
   try {
     await obs.connect("ws://localhost:4455", process.env.OBS_PASSWORD);
     console.log("Connected to OBS WebSocket");
+    callback(true);
   } catch (error) {
     console.error("OBS Connection Error:", error);
+    callback(false);
   }
 }
 
@@ -151,7 +160,6 @@ async function checkLiveStreams(broadcastStatus) {
       part: ["id,snippet"], // Get the name from snippet for sorting
       broadcastStatus: broadcastStatus, // Filter for active streams
       // mine: true, // Only works with OAuth; omit if using API key and add channelId
-      // // channelId: 'YOUR_CHANNEL_ID', // Uncomment and replace if using API key
       maxResults: 5, // Limit results (adjust as needed)
     });
 
@@ -175,7 +183,7 @@ async function checkLiveStreams(broadcastStatus) {
   }
 }
 
-async function createScheduledLiveStream(isFederation, isPublic) {
+async function createScheduledLiveStream({ isFederation, isPublic }) {
   try {
     // Fetch existing live streams
     const streamListResponse = await youtube.liveStreams.list({
@@ -304,14 +312,32 @@ async function stopOBSStreaming() {
       console.log("OBS streaming stopped");
     }
     await obs.disconnect();
+    await scheduler.wait(3000);
+
+    exec('taskkill /im obs64.exe"', (error, stdout, stderr) => {
+      if (error) {
+        console.error(`Error checking tasklist: ${error.message}`);
+        return;
+      }
+      console.log(stdout);
+      return;
+    });
   } catch (error) {
     console.error("Error stopping OBS or closing:", error);
   }
 }
 
+let fedLiveChat = null;
+let zeonLiveChat = null;
+
 // Setup Live Comment Fetching
-function setupLiveChat(broadcastId, isFederation) {
+function setupLiveChat({ broadcastId, isFederation }) {
   const liveChat = new LiveChat({ liveId: broadcastId });
+  if (isFederation) {
+    fedLiveChat = liveChat;
+  } else {
+    zeonLiveChat = liveChat;
+  }
 
   liveChat.on("start", (liveId) => {
     console.log(`start: ${liveId}`);
@@ -358,11 +384,62 @@ function setupLiveChat(broadcastId, isFederation) {
   liveChat.start();
 }
 
-// Main function
-async function main() {
-  await authorize();
-  await obsConnect();
+// Function to launch OBS
+async function launchOBS() {
+  await obsConnect(async (isRunning) => {
+    if (isRunning) {
+      console.log("OBS Studio is already running");
+    } else {
+      console.log("OBS Studio is not running, starting it...");
+      await exec(`"${obsPath}"`, { cwd: obsDir }, (error, stdout, stderr) => {
+        if (error) {
+          console.error(`Error launching OBS: ${error.message}`);
+          return;
+        }
+        if (stderr) {
+          console.error(`stderr: ${stderr}`);
+          return;
+        }
+      });
 
+      //Reset capture card DirectShow settings
+      await exec(
+        `${path.join(os.homedir(), "Documents\\WebCameraConfig.exe")}`,
+        { cwd: `${path.join(os.homedir(), "Documents\\")}` },
+        (error, stdout, stderr) => {
+          if (error) {
+            console.error(`Error setting camera config: ${error.message}`);
+            return;
+          }
+          if (stderr) {
+            console.error(`stderr: ${stderr}`);
+            return;
+          } else {
+            console.log("Capture card config set.");
+          }
+          console.log(stdout);
+        }
+      );
+
+      console.log("Wait 5 second before connecting to the OBS WebSocket");
+      await scheduler.wait(5000);
+
+      await obsConnect((isRunning) => {
+        if (isRunning == false) {
+          console.log("Cannot connect to OBS Studio");
+          return;
+        }
+      });
+    }
+  });
+}
+
+// Start Streaming
+async function startStreaming({ isPublic }) {
+  // Launch OBS
+  await launchOBS();
+
+  // Pre create events
   broadcastIds = await checkLiveStreams("active");
   if (broadcastIds.length > 0) {
     console.log("Live Broadcasting");
@@ -373,10 +450,16 @@ async function main() {
       console.log("Schduled already");
     } else {
       console.log("No Upcoming and No Live Streaming, create!");
-      const broadcastIdFed = await createScheduledLiveStream(true, true); // Public
+      const broadcastIdFed = await createScheduledLiveStream({
+        isFederation: true,
+        isPublic: isPublic,
+      });
       broadcastIds.push(broadcastIdFed);
 
-      const broadcastIdZeon = await createScheduledLiveStream(false, true); // Unlisted
+      const broadcastIdZeon = await createScheduledLiveStream({
+        isFederation: false,
+        isPublic: isPublic,
+      });
       broadcastIds.push(broadcastIdZeon);
     }
   }
@@ -387,12 +470,86 @@ async function main() {
     return;
   }
 
+  // Start Streaming
   await startOBSStreaming();
 
-  setTimeout(async () => {
-    setupLiveChat(broadcastIds[0], true); // true = Federation
-    setupLiveChat(broadcastIds[1], false); // false = Zeon
-  }, 10000);
+  // Start ChatFusion
+  await scheduler.wait(10000);
+  setupLiveChat({ broadcastId: broadcastIds[0], isFederation: true });
+  setupLiveChat({ broadcastId: broadcastIds[1], isFederation: false });
+}
+
+async function stopStreaming() {
+  try {
+    let streamStatus = await obs.call("GetStreamStatus");
+    if (streamStatus.outputActive) {
+      await stopOBSStreaming();
+      fedLiveChat?.stop();
+      zeonLiveChat?.stop();
+      fedLiveChat = null;
+      zeonLiveChat = null;
+    } else {
+      console.log("Not Streaming!");
+    }
+  } catch (error) {
+    console.error("Cannot get OBS Status", error);
+  }
+}
+
+async function updateStreamingStatus() {
+  try {
+    let streamStatus = await obs.call("GetStreamStatus");
+    io.emit("isStreaming", streamStatus.outputActive);
+  } catch (error) {
+    console.error("Cannot get OBS Status", error);
+  }
+}
+
+io.on("connection", async (client) => {
+  console.log("Client connected");
+  socketClient = client;
+
+  updateStreamingStatus();
+
+  client.on("startPublic", async () => {
+    console.log("Starting public streaming...");
+    await startStreaming({ isPublic: true });
+    io.emit("status", "Public streaming started");
+    updateStreamingStatus();
+  });
+
+  client.on("startUnlisted", async () => {
+    console.log("Starting unlisted streaming...");
+    await startStreaming({ isPublic: false });
+    io.emit("status", "Unlisted streaming started");
+    updateStreamingStatus();
+  });
+
+  client.on("stopStreaming", async () => {
+    console.log("Stopping streaming...");
+    await stopStreaming();
+    io.emit("status", "Streaming stopped");
+    updateStreamingStatus();
+  });
+
+  client.on("disconnect", () => {
+    socketClient = null;
+    console.log("Client disconnected");
+  });
+});
+
+// Schedule the function to run every day at 02:10 AM
+schedule.scheduleJob("10 2 * * *", () => {
+  stopStreaming();
+});
+
+// Main function
+async function main() {
+  await authorize();
+  await obsConnect(() => {});
+  // await startStreaming({ isPublic: false });
+  // await scheduler.wait(30000);
+  // await stopOBSStreaming();
 }
 
 main().catch(console.error);

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Streaming Control</title>
+    <style>
+      .container {
+        padding: 20px;
+        max-width: 600px;
+        margin: 20px auto;
+      }
+      button {
+        padding: 10px 20px;
+        margin: 5px;
+        cursor: pointer;
+      }
+      #consoleOutput {
+        width: 100%;
+        height: 200px;
+        background: #f0f0f0;
+        padding: 10px;
+        overflow-y: auto;
+        font-family: monospace;
+        margin-top: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <button id="startPublicBtn" onclick="startPublic()">
+        Start Public Streaming
+      </button>
+      <button id="startUnlistedBtn" onclick="startUnlisted()">
+        Start Unlisted Streaming
+      </button>
+      <button id="stopStreamingBtn" onclick="stopStreaming()">
+        Stop Streaming
+      </button>
+      <div id="consoleOutput"></div>
+    </div>
+
+    <script src="./socket.io.min.js"></script>
+    <script>
+      const socket = io();
+      const consoleOutput = document.getElementById("consoleOutput");
+      const startPublicBtn = document.getElementById("startPublicBtn");
+      const startUnlistedBtn = document.getElementById("startUnlistedBtn");
+      const stopStreamingBtn = document.getElementById("stopStreamingBtn");
+
+      // Update button states based on streaming status
+      function updateButtonStates({ isStreaming }) {
+        startPublicBtn.disabled = isStreaming;
+        startUnlistedBtn.disabled = isStreaming;
+        stopStreamingBtn.disabled = !isStreaming;
+      }
+
+      // Button functions
+      function startPublic() {
+        socket.emit("startPublic");
+        updateButtonStates({ isStreaming: true });
+      }
+
+      function startUnlisted() {
+        socket.emit("startUnlisted");
+        updateButtonStates({ isStreaming: true });
+      }
+
+      function stopStreaming() {
+        socket.emit("stopStreaming");
+        updateButtonStates({ isStreaming: false });
+      }
+
+      // Receive console messages from server
+      socket.on("console", (message) => {
+        const line = document.createElement("div");
+        line.textContent = message;
+        consoleOutput.appendChild(line);
+        consoleOutput.scrollTop = consoleOutput.scrollHeight;
+      });
+
+      // Optional: Receive status updates
+      socket.on("status", (status) => {
+        const line = document.createElement("div");
+        line.textContent = `Status: ${status}`;
+        consoleOutput.appendChild(line);
+        consoleOutput.scrollTop = consoleOutput.scrollHeight;
+      });
+
+      socket.on("isStreaming", (isStreaming) => {
+        updateButtonStates({ isStreaming });
+      });
+    </script>
+  </body>
+</html>
