@@ -113,8 +113,15 @@ async function authorize() {
   try {
     const tokenData = await fs.readFile(TOKEN_PATH).catch(() => null);
     if (tokenData) {
-      oAuth2Client.setCredentials(JSON.parse(tokenData));
-      return;
+      const credentials = JSON.parse(tokenData);
+      oAuth2Client.setCredentials(credentials);
+      // Test token validity
+      try {
+        await oAuth2Client.getAccessToken();
+        return;
+      } catch (error) {
+        console.log("Stored token is invalid, requesting new authorization");
+      }
     }
 
     const authUrl = oAuth2Client.generateAuthUrl({
@@ -132,11 +139,12 @@ async function authorize() {
 }
 
 oAuth2Client.on("tokens", async (tokens) => {
+  console.log("Received tokens:", tokens);
   if (tokens.refresh_token) {
     const currentTokens = oAuth2Client.credentials;
     currentTokens.refresh_token = tokens.refresh_token;
     await fs.writeFile(TOKEN_PATH, JSON.stringify(currentTokens));
-    console.log("Refresh token updated and saved");
+    console.log("Refresh token saved to", TOKEN_PATH);
   }
   oAuth2Client.setCredentials(tokens);
 });
