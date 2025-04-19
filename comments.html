@@ -1,185 +1,218 @@
 <html>
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=920px, height=560px, initial-scale=1.0">
-        <script src="./socket.io.min.js"></script>
-        <script>
-            function insertMessage(msg) {
-                const mainDiv = document.getElementById('main');
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=920px, height=560px, initial-scale=1.0"
+    />
+    <script src="./socket.io.min.js"></script>
+    <script>
+      function insertMessage(msg) {
+        const mainDiv = document.getElementById("main");
 
-                // Create a new message div
-                const messageDiv = document.createElement('div');
-                messageDiv.className = 'message';
-                messageDiv.innerHTML = `<span id="timestamp">${msg.time}</span>
+        // Create a new message div
+        const messageDiv = document.createElement("div");
+        messageDiv.className = "message";
+        messageDiv.innerHTML = `<span id="timestamp">${msg.time}</span>
                 <div id="author-photo" class="no-transition" style="background-color: transparent;" loaded="">
-                    <img id="img" class="yt-img-shadow" draggable="false" alt="" src="${msg.profilePic}">
+                    <img id="img" class="yt-img-shadow" draggable="false" alt="" src="${
+                      msg.profilePic
+                    }">
                 </div>
-                <span id="author-name" dir="auto" class="${msg.isFederation ? "fed" : "zeon"}">${msg.authorName}</span>
+                <span id="author-name" dir="auto" class="${
+                  msg.isFederation ? "fed" : "zeon"
+                }">${msg.authorName}</span>
                 ​<span id="message" dir="auto" >
                     ${msg.message}
                 </span>`;
 
-                // Insert the new message at the top
-                mainDiv.insertBefore(messageDiv, mainDiv.firstChild);
+        // Insert the new message at the top
+        mainDiv.insertBefore(messageDiv, mainDiv.firstChild);
 
-                // Check and remove the oldest message if there are more than 20
-                if (mainDiv.children.length > 20) {
-                    mainDiv.removeChild(mainDiv.lastChild);
-                }
+        // Check and remove the oldest message if there are more than 20
+        if (mainDiv.children.length > 20) {
+          mainDiv.removeChild(mainDiv.lastChild);
+        }
 
-                // Detect overflow using Range API
-                const authorName = messageDiv.querySelector('#author-name');
-                const range = document.createRange();
-                range.selectNodeContents(authorName);
-                const textRect = range.getBoundingClientRect();
-                const containerRect = authorName.getBoundingClientRect();
+        // Detect overflow using Range API
+        const authorName = messageDiv.querySelector("#author-name");
+        const range = document.createRange();
+        range.selectNodeContents(authorName);
+        const textRect = range.getBoundingClientRect();
+        const containerRect = authorName.getBoundingClientRect();
 
-                // Check if the text's rendered width exceeds the container's width
-                if (textRect.width > containerRect.width) {
-                    authorName.classList.add('overflow');
-                }
-            }
+        // Check if the text's rendered width exceeds the container's width
+        if (textRect.width > containerRect.width) {
+          authorName.classList.add("overflow");
+        }
+      }
 
+      function updateViewerCount(viewers) {
+        const viewerDiv = document.getElementById("viewer");
+        if (viewers != 0) {
+          viewerDiv.innerHTML = `<img src="./eye.png" />&nbsp;<b>${viewers}</b>`;
+        } else {
+          viewerDiv.innerHTML = ``;
+        }
+      }
 
-            const socket = io();
+      const socket = io();
 
-            // Listen for the 'message' event from the server
-            socket.on('message', (msg) => {
-                insertMessage(msg)
+      // Listen for the 'message' event from the server
+      socket.on("message", (msg) => {
+        insertMessage(msg);
+      });
 
-            });
-        </script>
-        <style>
-            body {
-                margin: 0;
-                font-family: 'PingFang HK';
-                /* background-color: #000000; */
-                background-color: transparent;
-            }
-            #main {
-                /* background-color: #313131; */
-                width: 920px;
-                height: 510px;
-                margin-top: 50px;
-            }
-            div {
-                display: block;
-            }
+      socket.on("totalviewers", (viewers) => {
+        updateViewerCount(viewers);
+      });
+    </script>
+    <style>
+      body {
+        margin: 0;
+        font-family: "PingFang HK";
+        /* background-color: #000000; */
+        background-color: transparent;
+      }
+      #main {
+        /* background-color: #313131; */
+        width: 920px;
+        height: 510px;
+        margin-top: 50px;
+      }
+      div {
+        display: block;
+      }
 
-            .fade-out {
-                position: relative;
-                background-color: transparent; /* Keep it transparent */
-                overflow: hidden; /* Ensure content doesn’t overflow */
-                -webkit-mask-image: linear-gradient(
-                    to bottom,
-                    black 60%,
-                    transparent 90%
-                    );
+      .fade-out {
+        position: relative;
+        background-color: transparent; /* Keep it transparent */
+        overflow: hidden; /* Ensure content doesn’t overflow */
+        -webkit-mask-image: linear-gradient(
+          to bottom,
+          black 60%,
+          transparent 90%
+        );
+      }
 
-            }
+      .message {
+        position: relative;
+        font-size: 30px;
+        padding: 4px 24px;
+        overflow: hidden;
+        contain: content;
+        display: flex;
+        flex-direction: row;
+        align-items: flex-start;
+      }
 
+      #timestamp,
+      #author-name {
+        color: rgb(191, 191, 191);
+      }
 
-            .message {
-                position: relative;
-                font-size: 30px;
-                padding: 4px 24px;
-                overflow: hidden;
-                contain: content;
-                display: flex;
-                flex-direction: row;
-                align-items: flex-start;
-                
-            }
+      #timestamp {
+        font-size: 20px;
+        white-space: nowrap;
+        align-self: baseline;
+        margin-top: 16px;
+      }
 
-            #timestamp, #author-name {
-                color: rgb(191, 191, 191);
-            }
-            
-            #timestamp {
-                font-size: 20px;
-                white-space: nowrap;
-                align-self: baseline;
-                margin-top: 16px;
-            }
+      #author-photo {
+        margin-left: 20px;
+        margin-right: 10px;
+        flex: none;
+        align-self: baseline; /* Align photo to its baseline */
+        margin-top: 12px; /* Adjust this value to align with message content's first line */
+      }
 
-            #author-photo {
-                margin-left: 20px;
-                margin-right: 10px;
-                flex: none;
-                align-self: baseline; /* Align photo to its baseline */
-                margin-top: 12px; /* Adjust this value to align with message content's first line */
-            }
+      #author-photo,
+      #author-photo img {
+        height: 30px;
+        width: 30px;
+      }
 
-            #author-photo, #author-photo img {
-                height: 30px;
-                width: 30px;
-            }
+      #author-name {
+        max-width: 260px; /* Set a fixed width for author name */
+        overflow: hidden; /* Hide overflow */
+        text-overflow: ellipsis; /* Show ellipsis for overflow */
+        white-space: nowrap; /* Prevent text wrapping */
+        margin-right: 16px; /* Adds space between elements */
+        align-self: baseline;
+        margin-top: 6px;
+        border-radius: 6px;
+        padding-left: 8px;
+        padding-right: 8px;
+        word-spacing: 0px;
+        letter-spacing: -1px;
+        font-stretch: condensed;
+      }
+      #author-name.overflow {
+        padding-right: 0px; /* Reduce space after ellipsis */
+      }
+      #author-name.zeon {
+        background-color: #960000;
+      }
+      #author-name.fed {
+        background-color: #182f93;
+      }
+      #message {
+        color: white;
+        overflow-wrap: break-word;
+        word-wrap: break-word;
+        word-break: break-word;
+        flex: 1;
+        line-height: 1.2;
+        margin-top: 9px;
+      }
 
-            
-            #author-name {
-                max-width: 260px; /* Set a fixed width for author name */
-                overflow: hidden; /* Hide overflow */
-                text-overflow: ellipsis; /* Show ellipsis for overflow */
-                white-space: nowrap; /* Prevent text wrapping */
-                margin-right: 16px; /* Adds space between elements */
-                align-self: baseline;
-                margin-top: 6px;
-                border-radius: 6px;
-                padding-left: 8px;
-                padding-right: 8px;
-                word-spacing: 0px;
-                letter-spacing: -1px;
-                font-stretch: condensed;
-            }
-            #author-name.overflow {
-                padding-right: 0px; /* Reduce space after ellipsis */
-            }
-            #author-name.zeon{
-                background-color: #960000;
-            }
-            #author-name.fed{
-                background-color: #182f93;
-            }
-            #message {
-                color: white;
-                overflow-wrap: break-word;
-                word-wrap: break-word;
-                word-break: break-word;
-                flex: 1;
-                line-height: 1.2;
-                margin-top: 9px;
-            }
+      .message span {
+        margin-top: auto; /* Use auto margin for vertical alignment if needed */
+        margin-bottom: auto; /* Optional: to center the item vertically */
+      }
 
-            .message span {
-                margin-top: auto; /* Use auto margin for vertical alignment if needed */
-                margin-bottom: auto; /* Optional: to center the item vertically */
-            }
-            
-            .yt-img-shadow {
-                overflow: hidden;
-                border-radius: 50%;
-                flex: none;   
-            }
-            .yt-img-shadow.zeon{
-                border: 2px solid #960000;
-            }
-            .yt-img-shadow.fed{
-                border: 2px solid #182f93;
-            }
+      .yt-img-shadow {
+        overflow: hidden;
+        border-radius: 50%;
+        flex: none;
+      }
+      .yt-img-shadow.zeon {
+        border: 2px solid #960000;
+      }
+      .yt-img-shadow.fed {
+        border: 2px solid #182f93;
+      }
 
+      #message .emoji {
+        width: 40px;
+        height: 40px;
+        margin: -2px 4px 2px;
+        vertical-align: middle;
+      }
 
-            #message .emoji {
-                width: 40px;
-                height: 40px;
-                margin: -2px 4px 2px;
-                vertical-align: middle;
-            }
-            
-        </style>
-    </head>
-    <body>
-        <div id="main" class="fade-out">
-        </div>
-        <img src="./chatlogo.png" style="position: absolute; left: 0px; top: 0px;" />
-    </body>
+      #viewer {
+        position: absolute;
+        color: rgb(191, 191, 191);
+        left: 740px;
+        top: 4px;
+        font-size: 36px;
+        line-height: 36px; /* Match font-size or image height */
+      }
+
+      #viewer img {
+        vertical-align: middle;
+        width: 48px;
+        height: 48px;
+      }
+
+      #viewer b {
+        vertical-align: middle;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="viewer"></div>
+    <div id="main" class="fade-out"></div>
+    <img src="./chatlogo.png" style="position: absolute; left: 0px; top: 0px" />
+  </body>
 </html>

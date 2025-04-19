@@ -1,17 +1,21 @@
-const { google } = require("googleapis");
-const { OAuth2Client } = require("google-auth-library");
-const { OBSWebSocket } = require("obs-websocket-js");
-const fs = require("fs").promises;
-const Youtube = require("youtube-api");
-const { LiveChat } = require("youtube-chat");
-const http = require("http");
-const path = require("path");
-const os = require("os");
-const { exec } = require("child_process");
-const url = require("url");
-const { scheduler } = require("node:timers/promises");
-const schedule = require("node-schedule");
-require("dotenv").config();
+import { google } from "googleapis";
+import { OAuth2Client } from "google-auth-library";
+import { OBSWebSocket } from "obs-websocket-js";
+import fs, { writeFile, unlink } from "fs/promises";
+import { LiveChat } from "youtube-chat";
+import http from "http";
+import path, { join } from "path";
+import os, { tmpdir } from "os";
+import { exec } from "child_process";
+import url from "url";
+import { scheduler } from "node:timers/promises";
+import schedule from "node-schedule";
+import { Server } from "socket.io";
+import axios from "axios";
+import sound from "sound-play";
+import { randomUUID } from "crypto";
+import dotenv from "dotenv";
+dotenv.config();
 
 // Path to OBS directory and executable
 const obsDir = "C:\\Program Files\\obs-studio\\bin\\64bit";
@@ -96,8 +100,7 @@ const server = http.createServer((req, res) => {
   }
 });
 
-const io = require("socket.io")(server);
-let socketClient = null;
+const io = new Server(server);
 
 // Override console.log to send to all clients
 const originalConsoleLog = console.log;
@@ -138,15 +141,22 @@ async function authorize() {
   }
 }
 
+// Persist tokens when updated
 oAuth2Client.on("tokens", async (tokens) => {
-  console.log("Received tokens:", tokens);
-  if (tokens.refresh_token) {
-    const currentTokens = oAuth2Client.credentials;
-    currentTokens.refresh_token = tokens.refresh_token;
+  try {
+    console.log("Received new tokens");
+    // Update credentials with new tokens
+    const currentTokens = {
+      ...oAuth2Client.credentials,
+      ...tokens,
+    };
+    // Save all tokens to disk
     await fs.writeFile(TOKEN_PATH, JSON.stringify(currentTokens));
-    console.log("Refresh token saved to", TOKEN_PATH);
+    console.log("Tokens saved to", TOKEN_PATH);
+    oAuth2Client.setCredentials(currentTokens);
+  } catch (error) {
+    console.error("Error saving tokens:", error);
   }
-  oAuth2Client.setCredentials(tokens);
 });
 
 // OBS WebSocket connection
@@ -160,6 +170,22 @@ async function obsConnect(callback) {
     callback(false);
   }
 }
+
+// Define Faction enum with additional properties
+const Faction = Object.freeze({
+  FEDERATION: {
+    value: "federation",
+    streamSnippetName: "OBS Federation",
+    displayName: "連邦",
+  },
+  ZEON: {
+    value: "zeon",
+    streamSnippetName: "OBS Zeon",
+    displayName: "自護",
+  },
+});
+
+let blockStartStreamingUntil = 0;
 
 // Function to check for active live streams and return their IDs
 async function checkLiveStreams(broadcastStatus) {
@@ -191,7 +217,7 @@ async function checkLiveStreams(broadcastStatus) {
   }
 }
 
-async function createScheduledLiveStream({ isFederation, isPublic }) {
+async function createScheduledLiveStream({ faction, isPublic }) {
   try {
     // Fetch existing live streams
     const streamListResponse = await youtube.liveStreams.list({
@@ -202,9 +228,7 @@ async function createScheduledLiveStream({ isFederation, isPublic }) {
 
     // Find the stream with the matching name
     const existingStream = streamListResponse.data.items.find(
-      (stream) =>
-        stream.snippet.title ===
-        `${isFederation ? "OBS Federation" : "OBS Zeon"}`
+      (stream) => stream.snippet.title === faction.streamSnippetName
     );
 
     if (!existingStream) {
@@ -219,9 +243,7 @@ async function createScheduledLiveStream({ isFederation, isPublic }) {
       part: "snippet,contentDetails,status",
       resource: {
         snippet: {
-          title: `荔枝角 Gundam DX【${
-            isFederation ? "連邦" : "自護"
-          }側】Mobile Suit Gundam: Federation vs. Zeon DX 機動戦士ガンダム 連邦vs.ジオンDX 高達DX`,
+          title: `荔枝角 Gundam DX【${faction.displayName}側】Mobile Suit Gundam: Federation vs. Zeon DX 機動戦士ガンダム 連邦vs.ジオンDX 高達DX`,
           description:
             "活力城 Power City 遊戲機中心\n九龍長沙灣道833號長沙灣廣場二期地下G09B3號舖 (荔枝角站)\n營業時間：0800 ~ 2600",
           scheduledStartTime: new Date(
@@ -258,9 +280,7 @@ async function createScheduledLiveStream({ isFederation, isPublic }) {
       resource: {
         id: broadcastId,
         snippet: {
-          title: `荔枝角 Gundam DX【${
-            isFederation ? "連邦" : "自護"
-          }側】Mobile Suit Gundam: Federation vs. Zeon DX 機動戦士ガンダム 連邦vs.ジオンDX 高達DX`,
+          title: `荔枝角 Gundam DX【${faction.displayName}側】Mobile Suit Gundam: Federation vs. Zeon DX 機動戦士ガンダム 連邦vs.ジオンDX 高達DX`,
           description:
             "活力城 Power City 遊戲機中心\n九龍長沙灣道833號長沙灣廣場二期地下G09B3號舖 (荔枝角站)\n營業時間：0800 ~ 2600",
           categoryId: "20", // Force Gaming category
@@ -324,7 +344,7 @@ async function stopOBSStreaming() {
 
     exec('taskkill /im obs64.exe"', (error, stdout, stderr) => {
       if (error) {
-        console.error(`Error checking tasklist: ${error.message}`);
+        console.error(`Error terminating OBS: ${error.message}`);
         return;
       }
       console.log(stdout);
@@ -337,11 +357,12 @@ async function stopOBSStreaming() {
 
 let fedLiveChat = null;
 let zeonLiveChat = null;
+let liveChatInterval = null;
 
 // Setup Live Comment Fetching
-function setupLiveChat({ broadcastId, isFederation }) {
+function setupLiveChat({ broadcastId, faction }) {
   const liveChat = new LiveChat({ liveId: broadcastId });
-  if (isFederation) {
+  if (faction === Faction.FEDERATION) {
     fedLiveChat = liveChat;
   } else {
     zeonLiveChat = liveChat;
@@ -367,7 +388,7 @@ function setupLiveChat({ broadcastId, isFederation }) {
     const formattedTime = formatter.format(date);
 
     const msg = {
-      isFederation: isFederation,
+      isFederation: faction === Faction.FEDERATION,
       time: formattedTime,
       authorName: chatItem.author.name,
       profilePic: chatItem.author.thumbnail.url,
@@ -379,10 +400,9 @@ function setupLiveChat({ broadcastId, isFederation }) {
         )
         .join(""),
     };
+    console.log(`${msg.authorName}: ${msg.message}`);
 
-    if (socketClient) {
-      socketClient.emit("message", msg);
-    }
+    io.emit("message", msg);
   });
 
   liveChat.on("error", (err) => {
@@ -390,6 +410,61 @@ function setupLiveChat({ broadcastId, isFederation }) {
   });
 
   liveChat.start();
+}
+
+// Function to fetch viewer count for a single video
+async function getViewerCount(videoId) {
+  try {
+    const response = await youtube.videos.list({
+      part: ["liveStreamingDetails"],
+      id: videoId,
+    });
+
+    const video = response.data.items[0];
+    if (
+      video &&
+      video.liveStreamingDetails &&
+      video.liveStreamingDetails.concurrentViewers
+    ) {
+      return parseInt(video.liveStreamingDetails.concurrentViewers, 10);
+    }
+    return 0; // Return 0 if no viewers or not live
+  } catch (error) {
+    console.error(
+      `Error fetching viewer count for video ${videoId}:`,
+      error.message
+    );
+    return 0;
+  }
+}
+
+// Function to fetch and sum viewer counts for an array of video IDs
+async function fetchAndSumViewers({ broadcastIds }) {
+  try {
+    // Fetch viewerIFIER counts concurrently
+    const viewerCounts = await Promise.all(
+      broadcastIds.map((videoId) => getViewerCount(videoId))
+    );
+
+    // Sum the viewer counts
+    const totalViewers = viewerCounts.reduce((sum, count) => sum + count, 0);
+
+    // Log the total
+    console.log(`Total Viewers: ${totalViewers}`);
+    io.emit("totalviewers", totalViewers);
+  } catch (error) {
+    console.error("Error in fetchAndSumViewers:", error.message);
+  }
+}
+
+async function setupLiveViewerCount({ broadcastIds }) {
+  fetchAndSumViewers({ broadcastIds });
+
+  if (liveChatInterval) clearInterval(liveChatInterval);
+  liveChatInterval = setInterval(
+    () => fetchAndSumViewers({ broadcastIds }),
+    25 * 1000
+  );
 }
 
 // Function to launch OBS
@@ -444,6 +519,15 @@ async function launchOBS() {
 
 // Start Streaming
 async function startStreaming({ isPublic }) {
+  // Check if startStreaming is blocked
+  if (Date.now() < blockStartStreamingUntil) {
+    io.emit("isStreaming", false);
+    console.log("Please wait for 60 seconds before starting again");
+    return;
+  }
+
+  let broadcastIds = [];
+
   // Launch OBS
   await launchOBS();
 
@@ -458,17 +542,11 @@ async function startStreaming({ isPublic }) {
       console.log("Schduled already");
     } else {
       console.log("No Upcoming and No Live Streaming, create!");
-      const broadcastIdFed = await createScheduledLiveStream({
-        isFederation: true,
-        isPublic: isPublic,
-      });
-      broadcastIds.push(broadcastIdFed);
 
-      const broadcastIdZeon = await createScheduledLiveStream({
-        isFederation: false,
-        isPublic: isPublic,
-      });
-      broadcastIds.push(broadcastIdZeon);
+      const broadcastPromises = [Faction.FEDERATION, Faction.ZEON].map(
+        (faction) => createScheduledLiveStream({ faction, isPublic })
+      );
+      broadcastIds = await Promise.all(broadcastPromises);
     }
   }
   console.log("Broadcast IDs:", broadcastIds);
@@ -478,24 +556,34 @@ async function startStreaming({ isPublic }) {
     return;
   }
 
+  await scheduler.wait(5000);
   // Start Streaming
   await startOBSStreaming();
 
+  console.log(`Started ${isPublic ? "Public" : "Unlisted"} streaming`);
+
   // Start ChatFusion
-  await scheduler.wait(10000);
-  setupLiveChat({ broadcastId: broadcastIds[0], isFederation: true });
-  setupLiveChat({ broadcastId: broadcastIds[1], isFederation: false });
+  await scheduler.wait(30000);
+
+  [Faction.FEDERATION, Faction.ZEON].forEach((faction, index) =>
+    setupLiveChat({ broadcastId: broadcastIds[index], faction })
+  );
+  setupLiveViewerCount({ broadcastIds });
 }
 
 async function stopStreaming() {
   try {
+    blockStartStreamingUntil = Date.now() + 60 * 1000; // Block for 60 seconds
+
     let streamStatus = await obs.call("GetStreamStatus");
     if (streamStatus.outputActive) {
       await stopOBSStreaming();
       fedLiveChat?.stop();
       zeonLiveChat?.stop();
+      clearInterval(liveChatInterval);
       fedLiveChat = null;
       zeonLiveChat = null;
+      liveChatInterval = null;
     } else {
       console.log("Not Streaming!");
     }
@@ -515,21 +603,18 @@ async function updateStreamingStatus() {
 
 io.on("connection", async (client) => {
   console.log("Client connected");
-  socketClient = client;
 
   updateStreamingStatus();
 
   client.on("startPublic", async () => {
     console.log("Starting public streaming...");
     await startStreaming({ isPublic: true });
-    io.emit("status", "Public streaming started");
     updateStreamingStatus();
   });
 
   client.on("startUnlisted", async () => {
     console.log("Starting unlisted streaming...");
     await startStreaming({ isPublic: false });
-    io.emit("status", "Unlisted streaming started");
     updateStreamingStatus();
   });
 
@@ -541,7 +626,6 @@ io.on("connection", async (client) => {
   });
 
   client.on("disconnect", () => {
-    socketClient = null;
     console.log("Client disconnected");
   });
 });
@@ -551,6 +635,87 @@ schedule.scheduleJob("10 2 * * *", () => {
   stopStreaming();
 });
 
+async function textToAudio(text) {
+  try {
+    const response = await axios.post(
+      `https://api.minimax.chat/v1/t2a_v2?GroupId=${process.env.MINIMAX_GROUP_ID}`,
+      {
+        model: "speech-02-turbo",
+        text,
+        stream: false,
+        language_boost: "Chinese,Yue",
+        timber_weights: [
+          {
+            voice_id: "Chinese (Mandarin)_Radio_Host",
+            weight: 1,
+          },
+        ],
+        voice_setting: {
+          voice_id: "",
+          speed: 1,
+          vol: 1,
+          pitch: 0,
+          emotion: "angry",
+        },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.MINIMAX_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    console.log(response.data.base_resp);
+    if (response.status == 200 && response.data.base_resp?.status_code == 0) {
+      const tempFilePath = join(tmpdir(), `${randomUUID()}.mp3`);
+      console.log(tempFilePath);
+
+      try {
+        // Convert hex to binary (Buffer)
+        const mp3Buffer = Buffer.from(response.data.data?.audio, "hex");
+
+        // Write the buffer to a temporary MP3 file
+        await writeFile(tempFilePath, mp3Buffer);
+        console.log(`Temporary file created: ${tempFilePath}`);
+
+        // Play the MP3 file (volume set to 50%)
+        await sound.play(tempFilePath, 1.0);
+        console.log("Audio playback completed");
+
+        // Clean up the temporary file
+        // await unlink(tempFilePath);
+        // console.log(`Temporary file deleted: ${tempFilePath}`);
+      } catch (error) {
+        console.error("Error:", error.message);
+        // Attempt to clean up the file if it exists
+        try {
+          // await unlink(tempFilePath);
+          // console.log(`Cleaned up temporary file: ${tempFilePath}`);
+        } catch (unlinkError) {
+          // Ignore if file doesn't exist
+        }
+      }
+    }
+
+    return response.data;
+  } catch (error) {
+    console.error(
+      "Error:",
+      error.response ? error.response.data : error.message
+    );
+    throw error;
+  }
+}
+
+function lofiTest() {
+  let broadcastIds = ["jfKfPfyJRdk", "4xDzrJKXOOY"];
+  // let broadcastIds = ["ARa-IibEfvY", "sLNGhHC0WyM"];
+  [Faction.FEDERATION, Faction.ZEON].forEach((faction, index) =>
+    setupLiveChat({ broadcastId: broadcastIds[index], faction })
+  );
+  setupLiveViewerCount({ broadcastIds });
+}
+
 // Main function
 async function main() {
   await authorize();
@@ -558,6 +723,8 @@ async function main() {
   // await startStreaming({ isPublic: false });
   // await scheduler.wait(30000);
   // await stopOBSStreaming();
+  // lofiTest();
+  // let audio = await textToAudio("點呀出色嘅螢火蟲🤣");
 }
 
 main().catch(console.error);
