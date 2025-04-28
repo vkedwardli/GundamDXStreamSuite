@@ -6,13 +6,14 @@ import { LiveChat } from "youtube-chat";
 import http from "http";
 import path, { join } from "path";
 import os, { tmpdir } from "os";
-import { exec } from "child_process";
+import { exec, spawn } from "child_process";
 import url from "url";
 import { scheduler } from "node:timers/promises";
 import schedule from "node-schedule";
 import { Server } from "socket.io";
 import axios from "axios";
 import sound from "sound-play";
+import Bottleneck from "bottleneck";
 import { randomUUID } from "crypto";
 import dotenv from "dotenv";
 dotenv.config();
@@ -21,6 +22,7 @@ dotenv.config();
 const obsDir = "C:\\Program Files\\obs-studio\\bin\\64bit";
 const obsPath = `${obsDir}\\obs64.exe`; // Full path to executable
 const obs = new OBSWebSocket();
+const __dirname = import.meta.dirname;
 
 // OAuth 2.0 Client Configuration
 const oAuth2Client = new OAuth2Client({
@@ -399,10 +401,14 @@ function setupLiveChat({ broadcastId, faction }) {
             : `<img class="emoji" src="${item.url}" alt="${item.emojiText}" shared-tooltip-text="${item.alt}" >`
         )
         .join(""),
+      plainMessage: chatItem.message
+        .map((item) => (item.text ? item.text : ` :${item.alt}: `))
+        .join(""),
     };
-    console.log(`${msg.authorName}: ${msg.message}`);
+    console.log(`${msg.authorName}: ${msg.plainMessage}`);
 
     io.emit("message", msg);
+    textToAudio(msg.plainMessage);
   });
 
   liveChat.on("error", (err) => {
@@ -562,6 +568,11 @@ async function startStreaming({ isPublic }) {
 
   console.log(`Started ${isPublic ? "Public" : "Unlisted"} streaming`);
 
+  io.emit("streamUrls", {
+    url1: `https://youtube.com/live/${broadcastIds[0]}`,
+    url2: `https://youtube.com/live/${broadcastIds[1]}`,
+  });
+
   // Start ChatFusion
   await scheduler.wait(30000);
 
@@ -597,14 +608,13 @@ async function updateStreamingStatus() {
     let streamStatus = await obs.call("GetStreamStatus");
     io.emit("isStreaming", streamStatus.outputActive);
   } catch (error) {
-    console.error("Cannot get OBS Status", error);
+    // console.error("Cannot get OBS Status", error);
+    io.emit("isStreaming", false);
   }
 }
 
 io.on("connection", async (client) => {
   console.log("Client connected");
-
-  updateStreamingStatus();
 
   client.on("startPublic", async () => {
     console.log("Starting public streaming...");
@@ -628,6 +638,10 @@ io.on("connection", async (client) => {
   client.on("disconnect", () => {
     console.log("Client disconnected");
   });
+
+  client.on("getStreamingStatus", () => {
+    updateStreamingStatus();
+  });
 });
 
 // Schedule the function to run every day at 02:10 AM
@@ -635,76 +649,126 @@ schedule.scheduleJob("10 2 * * *", () => {
   stopStreaming();
 });
 
+// Create rate limiter: 20 requests per minute (60,000ms / 20 = 3,000ms between requests)
+const limiter = new Bottleneck({
+  minTime: 3000, // 3,000ms between requests
+  maxConcurrent: 1,
+});
+
+// Wrap axios.post with rate limiter
+const rateLimitedPost = limiter.wrap(axios.post);
+
 async function textToAudio(text) {
-  try {
-    const response = await axios.post(
-      `https://api.minimax.chat/v1/t2a_v2?GroupId=${process.env.MINIMAX_GROUP_ID}`,
-      {
-        model: "speech-02-turbo",
-        text,
-        stream: false,
-        language_boost: "Chinese,Yue",
-        timber_weights: [
-          {
-            voice_id: "Chinese (Mandarin)_Radio_Host",
-            weight: 1,
+  const attemptRequest = async (retryCount = 0) => {
+    try {
+      const response = await rateLimitedPost(
+        `https://api.minimax.chat/v1/t2a_v2?GroupId=${process.env.MINIMAX_GROUP_ID}`,
+        {
+          model: "speech-02-turbo",
+          text,
+          stream: false,
+          language_boost: "Chinese,Yue",
+          timber_weights: [
+            {
+              voice_id: "Chinese (Mandarin)_Radio_Host",
+              weight: 1,
+            },
+          ],
+          voice_setting: {
+            voice_id: "",
+            speed: 0.9,
+            vol: 1,
+            pitch: 0,
+            emotion: "angry",
           },
-        ],
-        voice_setting: {
-          voice_id: "",
-          speed: 1,
-          vol: 1,
-          pitch: 0,
-          emotion: "angry",
         },
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.MINIMAX_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-    console.log(response.data.base_resp);
-    if (response.status == 200 && response.data.base_resp?.status_code == 0) {
-      const tempFilePath = join(tmpdir(), `${randomUUID()}.mp3`);
-      console.log(tempFilePath);
-
-      try {
-        // Convert hex to binary (Buffer)
-        const mp3Buffer = Buffer.from(response.data.data?.audio, "hex");
-
-        // Write the buffer to a temporary MP3 file
-        await writeFile(tempFilePath, mp3Buffer);
-        console.log(`Temporary file created: ${tempFilePath}`);
-
-        // Play the MP3 file (volume set to 50%)
-        await sound.play(tempFilePath, 1.0);
-        console.log("Audio playback completed");
-
-        // Clean up the temporary file
-        // await unlink(tempFilePath);
-        // console.log(`Temporary file deleted: ${tempFilePath}`);
-      } catch (error) {
-        console.error("Error:", error.message);
-        // Attempt to clean up the file if it exists
-        try {
-          // await unlink(tempFilePath);
-          // console.log(`Cleaned up temporary file: ${tempFilePath}`);
-        } catch (unlinkError) {
-          // Ignore if file doesn't exist
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.MINIMAX_API_KEY}`,
+            "Content-Type": "application/json",
+          },
         }
-      }
-    }
+      );
 
-    return response.data;
-  } catch (error) {
-    console.error(
-      "Error:",
-      error.response ? error.response.data : error.message
-    );
-    throw error;
-  }
+      console.log(response.data.base_resp);
+      if (
+        response.status === 200 &&
+        response.data.base_resp?.status_code === 0
+      ) {
+        const tempFilePath = join(tmpdir(), `${randomUUID()}.mp3`);
+        console.log(tempFilePath);
+
+        try {
+          // Convert hex to binary (Buffer)
+          const mp3Buffer = Buffer.from(response.data.data?.audio, "hex");
+
+          // Write the buffer to a temporary MP3 file
+          await writeFile(tempFilePath, mp3Buffer);
+          console.log(`Temporary file created: ${tempFilePath}`);
+
+          // Play the MP3 file (volume set to 50%)
+          await sound.play(tempFilePath, 1.0);
+          console.log("Audio playback completed");
+
+          // Clean up the temporary file
+          // await unlink(tempFilePath);
+          // console.log(`Temporary file deleted: ${tempFilePath}`);
+        } catch (error) {
+          console.error("Error processing audio:", error.message);
+        }
+      } else {
+        console.error("API response error:", response.data.base_resp);
+      }
+
+      return response.data;
+    } catch (error) {
+      const errorMessage = error.response ? error.response.data : error.message;
+      console.error(`Attempt ${retryCount + 1} failed:`, errorMessage);
+
+      // Retry once if this was the first attempt
+      if (retryCount < 1) {
+        console.log("Retrying...");
+        return attemptRequest(retryCount + 1);
+      }
+
+      // Log final error and return null instead of throwing
+      console.error("All retry attempts failed");
+      return null;
+    }
+  };
+
+  return attemptRequest();
+}
+
+async function startDXOPScreen() {
+  const tempUserDataDir = path.join(__dirname, `chrome-user-data}`);
+  await fs.mkdir(tempUserDataDir, { recursive: true });
+  // Command to open Chrome in kiosk mode with isolated user data directory
+  const chromePath =
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"; // Adjust path if needed
+  const url = "http://127.0.0.1:3000/control.html";
+
+  const chromeProcess = spawn(
+    chromePath,
+    [
+      "--kiosk",
+      "--new-window",
+      "--window-position=1920,0",
+      `--user-data-dir=${tempUserDataDir}`,
+      url,
+    ],
+    {
+      stdio: "ignore", // Ignore stdio to prevent buffering issues
+      detached: false, // Ensure child process is not detached
+    }
+  );
+  chromeProcess.on("error", (err) => {
+    console.error(`Error opening Chrome: ${err.message}`);
+  });
+
+  chromeProcess.on("close", (code) => {
+    console.log(`Chrome process exited with code ${code}`);
+  });
 }
 
 function lofiTest() {
@@ -720,6 +784,7 @@ function lofiTest() {
 async function main() {
   await authorize();
   await obsConnect(() => {});
+  startDXOPScreen();
   // await startStreaming({ isPublic: false });
   // await scheduler.wait(30000);
   // await stopOBSStreaming();
