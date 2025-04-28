@@ -312,7 +312,20 @@ async function createScheduledLiveStream({ faction, isPublic }) {
     return broadcastId;
   } catch (error) {
     console.error("Error creating live stream:", error);
-    throw error;
+  }
+}
+
+async function deleteLiveBroadcasts(broadcastIds) {
+  try {
+    for (const id of broadcastIds) {
+      await youtube.liveBroadcasts.delete({
+        id: id,
+      });
+      console.log(`Deleted broadcast with ID: ${id}`);
+    }
+    console.log("All scheduled broadcasts deleted.");
+  } catch (error) {
+    console.error("Error deleting broadcasts:", error.message);
   }
 }
 
@@ -559,7 +572,14 @@ async function startStreaming({ isPublic }) {
 
   if (broadcastIds.length != 2) {
     console.log("broadcastIds: Wrong size!!?");
-    return;
+    await deleteLiveBroadcasts(broadcastIds);
+
+    console.log("Try create live stream again!");
+
+    const broadcastPromises = [Faction.FEDERATION, Faction.ZEON].map(
+      (faction) => createScheduledLiveStream({ faction, isPublic })
+    );
+    broadcastIds = await Promise.all(broadcastPromises);
   }
 
   await scheduler.wait(5000);
