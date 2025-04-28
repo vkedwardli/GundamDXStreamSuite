@@ -60,6 +60,36 @@
       button:last-child {
         margin-right: 0; /* Remove right padding/margin for last button */
       }
+
+      /* Light green for enabled start buttons */
+      #startPublicBtn:not(:disabled) {
+        background: #28a745; /* Light green */
+        border-color: #1e7e34;
+      }
+
+      #startUnlistedBtn:not(:disabled) {
+        background: #6c757d; /* Muted gray-blue for secondary unlisted button */
+        border-color: #5a6268; /* Slightly darker border for definition */
+      }
+
+      /* Red for enabled stop button */
+      #stopStreamingBtn:not(:disabled) {
+        background: #dc3545; /* Red */
+        border-color: #a71d2a;
+      }
+
+      /* Optional: Adjust active states for better feedback */
+      #startPublicBtn:not(:disabled):active {
+        background: #1e7e34; /* Darker green when pressed */
+      }
+      #startUnlistedBtn:not(:disabled):active {
+        background: #5a6268; /* Darker shade when pressed */
+      }
+
+      #stopStreamingBtn:not(:disabled):active {
+        background: #a71d2a; /* Darker red when pressed */
+      }
+
       #consoleOutput {
         width: 100%;
         max-width: 1360px;
@@ -117,10 +147,10 @@
         margin-left: 20px;
       }
       .qr-code.fed {
-        background: #ccccff;
+        background: #b3d9ff;
       }
       .qr-code.zeon {
-        background: #ffcccc;
+        background: #ff9999;
       }
       .qr-code img {
         max-width: 100%;
