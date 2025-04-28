@@ -9,3 +9,5 @@ cd /d "%~dp0"
 
 REM Start your Node.js application
 node index.js
+
+cmd /k
