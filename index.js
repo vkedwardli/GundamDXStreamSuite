@@ -589,8 +589,8 @@ async function startStreaming({ isPublic }) {
   console.log(`Started ${isPublic ? "Public" : "Unlisted"} streaming`);
 
   io.emit("streamUrls", {
-    url1: `https://youtube.com/live/${broadcastIds[0]}`,
-    url2: `https://youtube.com/live/${broadcastIds[1]}`,
+    url1: `https://youtu.be/${broadcastIds[0]}`,
+    url2: `https://youtu.be/${broadcastIds[1]}`,
   });
 
   // Start ChatFusion
