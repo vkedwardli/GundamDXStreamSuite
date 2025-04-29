@@ -696,8 +696,8 @@ async function textToAudio(text) {
           ],
           voice_setting: {
             voice_id: "",
-            speed: 0.9,
-            vol: 1,
+            speed: 0.8,
+            vol: 3,
             pitch: 0,
             emotion: "angry",
           },
