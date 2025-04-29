@@ -665,8 +665,10 @@ io.on("connection", async (client) => {
 });
 
 // Schedule the function to run every day at 02:10 AM
-schedule.scheduleJob("10 2 * * *", () => {
-  stopStreaming();
+schedule.scheduleJob("10 2 * * *", async () => {
+  await stopStreaming();
+  io.emit("status", "Streaming stopped");
+  updateStreamingStatus();
 });
 
 // Create rate limiter: 20 requests per minute (60,000ms / 20 = 3,000ms between requests)
