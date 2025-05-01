@@ -226,7 +226,6 @@ async function createScheduledLiveStream({ faction, isPublic }) {
       part: "id,snippet,cdn",
       mine: true, // Only fetch streams for the authenticated user
     });
-    //   console.log('Available streams:', streamListResponse.data.items);
 
     // Find the stream with the matching name
     const existingStream = streamListResponse.data.items.find(
@@ -244,6 +243,7 @@ async function createScheduledLiveStream({ faction, isPublic }) {
     const broadcastResponse = await youtube.liveBroadcasts.insert({
       part: "snippet,contentDetails,status",
       resource: {
+        // Placeholder snippet, details will be overwritten by updateVideoDetails
         snippet: {
           title: `荔枝角 Gundam DX【${faction.displayName}側】Mobile Suit Gundam: Federation vs. Zeon DX 機動戦士ガンダム 連邦vs.ジオンDX 高達DX`,
           description:
@@ -251,6 +251,8 @@ async function createScheduledLiveStream({ faction, isPublic }) {
           scheduledStartTime: new Date(
             Date.now() + 10 * 60 * 1000
           ).toISOString(),
+          defaultLanguage: "zh-HK",
+          defaultAudioLanguage: "zh-HK",
         },
         contentDetails: {
           enableEmbed: true,
@@ -258,7 +260,7 @@ async function createScheduledLiveStream({ faction, isPublic }) {
           enableAutoStop: true,
           enableContentEncryption: false,
           enableReactions: true,
-          latencyPreference: "low",
+          latencyPreference: "ultraLow",
         },
         status: {
           privacyStatus: isPublic ? "public" : "unlisted",
@@ -276,15 +278,50 @@ async function createScheduledLiveStream({ faction, isPublic }) {
       streamId: streamId,
     });
 
-    // Update the category to Gaming (categoryId: '20') after insert
+    console.log(`Scheduled live stream: ${broadcastId}`);
+    return { broadcastId, faction };
+  } catch (error) {
+    console.error("Error creating live stream:", error);
+    throw error;
+  }
+}
+
+async function updateVideoDetails({
+  broadcastId,
+  faction,
+  opponentBroadcastId,
+}) {
+  try {
+    // Format current date as YYYY/MM/DD
+    const currentDate = new Date()
+      .toLocaleDateString("en-CA", {
+        timeZone: "Asia/Hong_Kong",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      })
+      .replace(/-/g, "/");
+
     await youtube.videos.update({
       part: "snippet,status",
       resource: {
         id: broadcastId,
         snippet: {
-          title: `荔枝角 Gundam DX【${faction.displayName}側】Mobile Suit Gundam: Federation vs. Zeon DX 機動戦士ガンダム 連邦vs.ジオンDX 高達DX`,
-          description:
-            "活力城 Power City 遊戲機中心\n九龍長沙灣道833號長沙灣廣場二期地下G09B3號舖 (荔枝角站)\n營業時間：0800 ~ 2600",
+          title: `荔枝角 Gundam DX【${faction.displayName}側】${currentDate} Mobile Suit Gundam: Federation vs. Zeon DX 機動戦士ガンダム 連邦vs.ジオンDX 高達DX`,
+          description: `🕹️ 活力城 Power City 遊戲機中心
+九龍長沙灣道833號長沙灣廣場二期地下G09B3號舖 (荔枝角站)
+營業時間：0800 ~ 2600
+
+👁️‍🗨️ 切換視點到${
+            faction === Faction.FEDERATION
+              ? Faction.ZEON.displayName
+              : Faction.FEDERATION.displayName
+          }側: https://youtu.be/${opponentBroadcastId}
+
+🔗 Facebook： https://facebook.com/Mobile.Suit.Gundam.DX
+🔗 Gundam DX 吹水台 Telegram： http://t.me/GundamDX （傾Online對戰都得！）
+
+🧑‍🎨 Designed by zetaeddie`,
           categoryId: "20", // Force Gaming category
           tags: [
             "Mobile Suit Gundam: Federation vs. Zeon DX",
@@ -301,17 +338,17 @@ async function createScheduledLiveStream({ faction, isPublic }) {
             "Gundam VS",
             "Arcade Games",
           ],
+          defaultLanguage: "zh-HK",
+          defaultAudioLanguage: "zh-HK",
         },
         status: {
           containsSyntheticMedia: false,
         },
       },
     });
-
-    console.log(`Scheduled live stream: ${broadcastId}`);
-    return broadcastId;
+    console.log(`Updated video details for broadcast: ${broadcastId}`);
   } catch (error) {
-    console.error("Error creating live stream:", error);
+    console.error(`Error updating video details for ${broadcastId}:`, error);
   }
 }
 
@@ -537,7 +574,9 @@ async function launchOBS() {
 }
 
 // Start Streaming
-async function startStreaming({ isPublic }) {
+async function startStreaming({ isPublic, retryCount = 0 }) {
+  const MAX_RETRIES = 3;
+
   // Check if startStreaming is blocked
   if (Date.now() < blockStartStreamingUntil) {
     io.emit("isStreaming", false);
@@ -558,14 +597,48 @@ async function startStreaming({ isPublic }) {
     // check if event is scheduled
     broadcastIds = await checkLiveStreams("upcoming");
     if (broadcastIds.length > 0) {
-      console.log("Schduled already");
+      console.log("Scheduled already");
     } else {
       console.log("No Upcoming and No Live Streaming, create!");
 
-      const broadcastPromises = [Faction.FEDERATION, Faction.ZEON].map(
-        (faction) => createScheduledLiveStream({ faction, isPublic })
-      );
-      broadcastIds = await Promise.all(broadcastPromises);
+      try {
+        const broadcastPromises = [Faction.FEDERATION, Faction.ZEON].map(
+          (faction) => createScheduledLiveStream({ faction, isPublic })
+        );
+        const broadcastResults = await Promise.all(broadcastPromises);
+
+        // Update video details with cross-referenced stream URLs
+        const federationResult = broadcastResults.find(
+          (result) => result.faction === Faction.FEDERATION
+        );
+        const zeonResult = broadcastResults.find(
+          (result) => result.faction === Faction.ZEON
+        );
+
+        if (!federationResult || !zeonResult) {
+          throw new Error(
+            `Failed to find broadcast results: Federation=${!!federationResult}, Zeon=${!!zeonResult}`
+          );
+        }
+
+        broadcastIds = [federationResult.broadcastId, zeonResult.broadcastId];
+
+        await Promise.all([
+          updateVideoDetails({
+            broadcastId: federationResult.broadcastId,
+            faction: federationResult.faction,
+            opponentBroadcastId: zeonResult.broadcastId,
+          }),
+          updateVideoDetails({
+            broadcastId: zeonResult.broadcastId,
+            faction: zeonResult.faction,
+            opponentBroadcastId: federationResult.broadcastId,
+          }),
+        ]);
+      } catch (error) {
+        console.error("Error creating or updating streams:", error);
+        broadcastIds = []; // Reset broadcastIds to trigger retry
+      }
     }
   }
   console.log("Broadcast IDs:", broadcastIds);
@@ -575,11 +648,15 @@ async function startStreaming({ isPublic }) {
     await deleteLiveBroadcasts(broadcastIds);
 
     console.log("Try create live stream again!");
-
-    const broadcastPromises = [Faction.FEDERATION, Faction.ZEON].map(
-      (faction) => createScheduledLiveStream({ faction, isPublic })
-    );
-    broadcastIds = await Promise.all(broadcastPromises);
+    if (retryCount < MAX_RETRIES) {
+      console.log(
+        `Retrying startStreaming (Attempt ${retryCount + 1}/${MAX_RETRIES})`
+      );
+      return startStreaming({ isPublic, retryCount: retryCount + 1 });
+    } else {
+      console.error("Max retries reached. Failed to create live streams.");
+      return;
+    }
   }
 
   await scheduler.wait(5000);
