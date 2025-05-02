@@ -457,8 +457,11 @@ function setupLiveChat({ broadcastId, faction }) {
     };
     console.log(`${msg.authorName}: ${msg.plainMessage}`);
 
+    if (msg.message.startsWith("!say ")) {
+      msg.message = "🔊 " + msg.message.slice(5);
+      textToAudio(msg.plainMessage.slice(5));
+    }
     io.emit("message", msg);
-    textToAudio(msg.plainMessage);
   });
 
   liveChat.on("error", (err) => {
