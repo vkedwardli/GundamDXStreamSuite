@@ -325,7 +325,9 @@ async function updateVideoDetails({
 🔗 Gundam DX 吹水台 Telegram： http://t.me/GundamDX （傾Online對戰都得！）
 
 🧑‍🎨 Designed by zetaeddie
-🧑‍💻 Setup by Edw`,
+🧑‍💻 Setup by Edw
+
+#Gundam #GundamDX #連ジ #arcade #GundamVS`,
           categoryId: "20", // Force Gaming category
           tags: [
             "Mobile Suit Gundam: Federation vs. Zeon DX",
