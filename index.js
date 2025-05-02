@@ -308,20 +308,24 @@ async function updateVideoDetails({
         id: broadcastId,
         snippet: {
           title: `荔枝角 Gundam DX【${faction.displayName}側】${currentDate} Mobile Suit Gundam: Federation vs. Zeon DX 機動戦士ガンダム 連邦vs.ジオンDX 高達DX`,
-          description: `🕹️ 活力城 Power City 遊戲機中心
-九龍長沙灣道833號長沙灣廣場二期地下G09B3號舖 (荔枝角站)
-營業時間：0800 ~ 2600
-
-👁️‍🗨️ 切換視點到${
+          description: `👁️‍🗨️ 切換視點到${
             faction === Faction.FEDERATION
               ? Faction.ZEON.displayName
               : Faction.FEDERATION.displayName
           }側: https://youtu.be/${opponentBroadcastId}
 
+🔊 留言大聲公：
+使用 *!say [message]* 格式，系統就會自動讀出你嘅留言！
+
+🕹️ 活力城 Power City 遊戲機中心
+九龍長沙灣道833號長沙灣廣場二期地下G09B3號舖 (荔枝角站)
+營業時間：0800 ~ 2600
+
 🔗 Facebook： https://facebook.com/Mobile.Suit.Gundam.DX
 🔗 Gundam DX 吹水台 Telegram： http://t.me/GundamDX （傾Online對戰都得！）
 
-🧑‍🎨 Designed by zetaeddie`,
+🧑‍🎨 Designed by zetaeddie
+🧑‍💻 Setup by Edw`,
           categoryId: "20", // Force Gaming category
           tags: [
             "Mobile Suit Gundam: Federation vs. Zeon DX",
