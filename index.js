@@ -260,7 +260,7 @@ async function createScheduledLiveStream({ faction, isPublic }) {
           enableAutoStop: true,
           enableContentEncryption: false,
           enableReactions: true,
-          latencyPreference: "ultraLow",
+          latencyPreference: "low",
         },
         status: {
           privacyStatus: isPublic ? "public" : "unlisted",
@@ -776,7 +776,7 @@ async function textToAudio(text) {
           voice_setting: {
             voice_id: "",
             speed: 0.8,
-            vol: 3,
+            vol: 2,
             pitch: 0,
             emotion: "angry",
           },
