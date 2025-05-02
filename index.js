@@ -278,7 +278,7 @@ async function createScheduledLiveStream({ faction, isPublic }) {
       streamId: streamId,
     });
 
-    console.log(`Scheduled live stream: ${broadcastId}`);
+    console.log(`Scheduled ${faction.value} live stream: ${broadcastId}`);
     return { broadcastId, faction };
   } catch (error) {
     console.error("Error creating live stream:", error);
@@ -346,9 +346,14 @@ async function updateVideoDetails({
         },
       },
     });
-    console.log(`Updated video details for broadcast: ${broadcastId}`);
+    console.log(
+      `Updated video details for ${faction.value} broadcast: https://youtu.be/${broadcastId}`
+    );
   } catch (error) {
-    console.error(`Error updating video details for ${broadcastId}:`, error);
+    console.error(
+      `Error updating ${faction.value} video details for ${broadcastId}:`,
+      error
+    );
   }
 }
 
