@@ -468,6 +468,26 @@ function setupLiveChat({ broadcastId, faction }) {
     };
     console.log(`${msg.authorName}: ${msg.plainMessage}`);
 
+    // Check for duplicate message
+    const currentTime = Date.now();
+    const messageKey = msg.plainMessage;
+
+    // Clean up old cache entries
+    for (const [key, timestamp] of messageCache) {
+      if (currentTime - timestamp > 2000) {
+        messageCache.delete(key);
+      }
+    }
+
+    // Check if message is a duplicate within 2 seconds
+    if (messageCache.has(messageKey)) {
+      return; // Skip processing duplicate message
+    }
+
+    // Store new message in cache
+    messageCache.set(messageKey, currentTime);
+
+    // Process message
     if (msg.message.startsWith("!say ")) {
       msg.message = "🔊 " + msg.message.slice(5);
       textToAudio(msg.plainMessage.slice(5));
