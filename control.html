@@ -206,6 +206,18 @@
       .dialog-buttons .cancel-btn:active {
         background: #a71d2a;
       }
+
+      #megaphone {
+        display: flex;
+        justify-content: center; /* Horizontally center the text */
+        align-items: center; /* Vertically center the text */
+        height: 100px;
+        width: 100px;
+        background-color: #ccc;
+        margin: 0 20px; /* Equal spacing on left and right for even distribution */
+        border-radius: 20px;
+        font-size: 40px;
+      }
     </style>
   </head>
   <body>
@@ -214,6 +226,7 @@
         <div class="logo-area" id="logoArea">
           <img src="./lckzaku.png" style="border-radius: 10%" />
         </div>
+        <div id="megaphone"></div>
         <div class="qr-container">
           <div class="qr-code fed" id="qrCode1">Federation QR</div>
           <div class="qr-code zeon" id="qrCode2">Zeon QR</div>
@@ -253,6 +266,7 @@
       const confirmMessage = document.getElementById("confirmMessage");
       const confirmBtn = document.getElementById("confirmBtn");
       const cancelBtn = document.getElementById("cancelBtn");
+      const megaphoneBtn = document.getElementById("megaphone");
       let pendingAction = null;
 
       // Update button states based on streaming status
@@ -276,6 +290,7 @@
       }
 
       socket.emit("getStreamingStatus");
+      socket.emit("getMegaphoneStatus");
 
       // Button functions
       function startPublic() {
@@ -331,6 +346,14 @@
         qrCode2.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
           url2
         )}" alt="QR Code 2">`;
+      });
+
+      socket.on("megaphoneStatus", (megaphoneState) => {
+        megaphoneBtn.innerHTML = megaphoneState.icon;
+      });
+
+      megaphoneBtn.addEventListener("click", () => {
+        socket.emit("toggleMegaphone");
       });
 
       // Dialog button event listeners

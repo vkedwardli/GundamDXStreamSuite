@@ -187,6 +187,18 @@ const Faction = Object.freeze({
   },
 });
 
+const TTSModel = Object.freeze({
+  MINIMAX_AI: "MINIMAX_AI",
+  AZURE_AI: "AZURE_AI",
+});
+
+const Megaphone = Object.freeze({
+  ENABLED: { enabled: true, icon: "🔊" },
+  MUTED: { enabled: false, icon: "🔇" },
+});
+
+let megaphoneState = Megaphone.ENABLED;
+
 let blockStartStreamingUntil = 0;
 
 // Function to check for active live streams and return their IDs
@@ -421,6 +433,7 @@ async function stopOBSStreaming() {
 let fedLiveChat = null;
 let zeonLiveChat = null;
 let liveChatInterval = null;
+const messageCache = new Map();
 
 // Setup Live Comment Fetching
 function setupLiveChat({ broadcastId, faction }) {
@@ -489,8 +502,12 @@ function setupLiveChat({ broadcastId, faction }) {
 
     // Process message
     if (msg.message.startsWith("!say ")) {
-      msg.message = "🔊 " + msg.message.slice(5);
-      textToAudio(msg.plainMessage.slice(5));
+      msg.message = `${megaphoneState.icon} ` + msg.message.slice(5);
+      if (megaphoneState == Megaphone.ENABLED)
+        textToSpeech({
+          text: msg.plainMessage.slice(5),
+          model: TTSModel.AZURE_AI,
+        });
     }
     io.emit("message", msg);
   });
@@ -773,6 +790,16 @@ io.on("connection", async (client) => {
   client.on("getStreamingStatus", () => {
     updateStreamingStatus();
   });
+
+  client.on("toggleMegaphone", () => {
+    if (megaphoneState.enabled) megaphoneState = Megaphone.MUTED;
+    else megaphoneState = Megaphone.ENABLED;
+    io.emit("megaphoneStatus", megaphoneState);
+  });
+
+  client.on("getMegaphoneStatus", () => {
+    io.emit("megaphoneStatus", megaphoneState);
+  });
 });
 
 // Schedule the function to run every day at 02:10 AM
@@ -791,9 +818,42 @@ const limiter = new Bottleneck({
 // Wrap axios.post with rate limiter
 const rateLimitedPost = limiter.wrap(axios.post);
 
-async function textToAudio(text) {
-  const attemptRequest = async (retryCount = 0) => {
-    try {
+const audioQueue = [];
+let isPlaying = false;
+
+async function textToSpeech({ text, model }) {
+  // Add message to queue
+  audioQueue.push({ text, model });
+
+  // If already playing, return and let the queue handle it
+  if (isPlaying) {
+    return;
+  }
+
+  // Process the queue
+  await processTTSQueue();
+}
+
+async function processTTSQueue() {
+  if (isPlaying || audioQueue.length === 0) {
+    return;
+  }
+
+  isPlaying = true;
+  const { text, model } = audioQueue.shift();
+
+  try {
+    if (model === TTSModel.AZURE_AI) {
+      const { exec } = await import("child_process");
+      const util = await import("util");
+      const execPromise = util.promisify(exec);
+
+      await execPromise(
+        `edge-playback --rate=-25% --voice "zh-HK-WanLungNeural" --text "${text}"`
+      );
+      console.log("Azure AI Speech playback completed");
+    } else {
+      // MiniMaxAI TTS
       const response = await rateLimitedPost(
         `https://api.minimax.chat/v1/t2a_v2?GroupId=${process.env.MINIMAX_GROUP_ID}`,
         {
@@ -837,40 +897,35 @@ async function textToAudio(text) {
 
           // Write the buffer to a temporary MP3 file
           await writeFile(tempFilePath, mp3Buffer);
-          console.log(`Temporary file created: ${tempFilePath}`);
 
           // Play the MP3 file (volume set to 50%)
           await sound.play(tempFilePath, 1.0);
-          console.log("Audio playback completed");
+          console.log("MiniMax AI Speech playback completed");
 
           // Clean up the temporary file
-          // await unlink(tempFilePath);
-          // console.log(`Temporary file deleted: ${tempFilePath}`);
+          setTimeout(() => {
+            unlink(tempFilePath);
+          }, 1000);
         } catch (error) {
           console.error("Error processing audio:", error.message);
         }
       } else {
         console.error("API response error:", response.data.base_resp);
       }
-
-      return response.data;
-    } catch (error) {
-      const errorMessage = error.response ? error.response.data : error.message;
-      console.error(`Attempt ${retryCount + 1} failed:`, errorMessage);
-
-      // Retry once if this was the first attempt
-      if (retryCount < 1) {
-        console.log("Retrying...");
-        return attemptRequest(retryCount + 1);
-      }
-
-      // Log final error and return null instead of throwing
-      console.error("All retry attempts failed");
-      return null;
     }
-  };
 
-  return attemptRequest();
+    // Wait for 1.5 seconds before processing the next item
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  } catch (error) {
+    const errorMessage = error.response ? error.response.data : error.message;
+    console.error("Error in audio playback:", errorMessage);
+  } finally {
+    isPlaying = false;
+    // Process the next item in the queue
+    if (audioQueue.length > 0) {
+      await processTTSQueue();
+    }
+  }
 }
 
 async function startDXOPScreen() {
@@ -922,7 +977,10 @@ async function main() {
   // await scheduler.wait(30000);
   // await stopOBSStreaming();
   // lofiTest();
-  // let audio = await textToAudio("點呀出色嘅螢火蟲🤣");
+  // await textToSpeech({
+  //   text: "Testing",
+  //   model: TTSModel.AZURE_AI,
+  // });
 }
 
 main().catch(console.error);
