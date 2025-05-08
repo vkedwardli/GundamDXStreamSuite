@@ -391,11 +391,19 @@ async function deleteLiveBroadcasts(broadcastIds) {
   }
 }
 
+async function IsLiveStreaming() {
+  try {
+    let streamStatus = await obs.call("GetStreamStatus");
+    return streamStatus.outputActive;
+  } catch {
+    return false;
+  }
+}
+
 // Start streaming in OBS
 async function startOBSStreaming() {
   try {
-    let streamStatus = await obs.call("GetStreamStatus");
-    if (streamStatus.outputActive == false) {
+    if ((await IsLiveStreaming()) == false) {
       await obs.call("StartStream");
       console.log("OBS streaming started");
     } else {
@@ -409,8 +417,7 @@ async function startOBSStreaming() {
 // Stop streaming and close OBS
 async function stopOBSStreaming() {
   try {
-    let streamStatus = await obs.call("GetStreamStatus");
-    if (streamStatus.outputActive == false) {
+    if ((await IsLiveStreaming()) == false) {
       console.log("OBS streaming not started");
     } else {
       await obs.call("StopStream");
@@ -736,8 +743,7 @@ async function stopStreaming() {
   try {
     blockStartStreamingUntil = Date.now() + 60 * 1000; // Block for 60 seconds
 
-    let streamStatus = await obs.call("GetStreamStatus");
-    if (streamStatus.outputActive) {
+    if (await IsLiveStreaming()) {
       await stopOBSStreaming();
       fedLiveChat?.stop();
       zeonLiveChat?.stop();
@@ -754,13 +760,7 @@ async function stopStreaming() {
 }
 
 async function updateStreamingStatus() {
-  try {
-    let streamStatus = await obs.call("GetStreamStatus");
-    io.emit("isStreaming", streamStatus.outputActive);
-  } catch (error) {
-    // console.error("Cannot get OBS Status", error);
-    io.emit("isStreaming", false);
-  }
+  io.emit("isStreaming", await IsLiveStreaming());
 }
 
 io.on("connection", async (client) => {
@@ -793,7 +793,12 @@ io.on("connection", async (client) => {
     updateStreamingStatus();
   });
 
-  client.on("toggleMegaphone", () => {
+  client.on("toggleMegaphone", async () => {
+    if ((await IsLiveStreaming()) == false) {
+      console.log("not streaming");
+      return;
+    }
+
     if (megaphoneState.enabled) {
       megaphoneState = Megaphone.MUTED;
 
