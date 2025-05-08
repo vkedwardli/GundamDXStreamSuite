@@ -78,6 +78,46 @@
       socket.on("totalviewers", (viewers) => {
         updateViewerCount(viewers);
       });
+
+      let timerInterval = null;
+      socket.on("megaphoneStatus", (megaphoneStatus) => {
+        const timerDisplay = document.getElementById("annoucement");
+
+        console.log(megaphoneStatus);
+
+        if (megaphoneStatus.enabled) {
+          clearInterval(timerInterval);
+          timerDisplay.textContent = "";
+        } else {
+          // Countdown timer logic
+          let timeLeft = 3 * 60;
+
+          function formatTime(seconds) {
+            const minutes = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return `🔇 滅聲倒數: ${minutes}m${secs
+              .toString()
+              .padStart(2, "0")}s`;
+          }
+
+          function updateTimer() {
+            if (timeLeft <= 0) {
+              socket.emit("setMegaphone", true);
+              return;
+            }
+            console.log("fuck");
+
+            timerDisplay.textContent = formatTime(timeLeft);
+            timeLeft--;
+          }
+
+          // Initialize timer display
+          timerDisplay.textContent = formatTime(timeLeft);
+
+          // Update timer every second
+          timerInterval = setInterval(updateTimer, 1000);
+        }
+      });
     </script>
     <style>
       body {
@@ -220,10 +260,22 @@
       #viewer b {
         vertical-align: middle;
       }
+
+      #annoucement {
+        position: absolute;
+        width: 360px;
+        height: 32px;
+        font-size: 30px;
+        line-height: 30px;
+        left: 370px;
+        top: 14px;
+        color: rgb(191, 191, 191);
+      }
     </style>
   </head>
   <body>
     <div id="viewer"></div>
+    <div id="annoucement"></div>
     <div id="main" class="fade-out"></div>
     <img
       id="DXLogo"

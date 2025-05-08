@@ -794,8 +794,26 @@ io.on("connection", async (client) => {
   });
 
   client.on("toggleMegaphone", () => {
-    if (megaphoneState.enabled) megaphoneState = Megaphone.MUTED;
-    else megaphoneState = Megaphone.ENABLED;
+    if (megaphoneState.enabled) {
+      megaphoneState = Megaphone.MUTED;
+
+      const msg = {
+        isFederation: true,
+        time: "",
+        authorName: "現場發動滅聲",
+        profilePic: "mute.png",
+        message:
+          "我真係唔得喇，你唔好再... 💥 你老闆話你真係，我已經話咗唔得嫁啦，你仲要喔噢喔噢咁，完全唔理我幾咁難受嘅你！😡",
+      };
+
+      io.emit("message", msg);
+    } else megaphoneState = Megaphone.ENABLED;
+    io.emit("megaphoneStatus", megaphoneState);
+  });
+
+  client.on("setMegaphone", (enabled) => {
+    if (enabled) megaphoneState = Megaphone.ENABLED;
+    else megaphoneState = Megaphone.MUTED;
     io.emit("megaphoneStatus", megaphoneState);
   });
 
