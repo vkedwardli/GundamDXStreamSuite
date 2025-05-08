@@ -743,6 +743,9 @@ async function stopStreaming() {
   try {
     blockStartStreamingUntil = Date.now() + 60 * 1000; // Block for 60 seconds
 
+    megaphoneState = Megaphone.ENABLED;
+    io.emit("megaphoneStatus", megaphoneState);
+
     if (await IsLiveStreaming()) {
       await stopOBSStreaming();
       fedLiveChat?.stop();
