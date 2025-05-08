@@ -18,6 +18,8 @@ import { randomUUID } from "crypto";
 import dotenv from "dotenv";
 dotenv.config();
 
+const isDev = process.env.NODE_ENV === "development";
+
 // Path to OBS directory and executable
 const obsDir = "C:\\Program Files\\obs-studio\\bin\\64bit";
 const obsPath = `${obsDir}\\obs64.exe`; // Full path to executable
@@ -929,6 +931,7 @@ async function processTTSQueue() {
 }
 
 async function startDXOPScreen() {
+  if (isDev) return;
   const tempUserDataDir = path.join(__dirname, `chrome-user-data}`);
   await fs.mkdir(tempUserDataDir, { recursive: true });
   // Command to open Chrome in kiosk mode with isolated user data directory

@@ -7,6 +7,18 @@
     />
     <script src="./socket.io.min.js"></script>
     <script>
+      function getQueryParam(param) {
+        const urlParams = new URLSearchParams(window.location.search);
+        return urlParams.get(param);
+      }
+      document.addEventListener("DOMContentLoaded", () => {
+        if (getQueryParam("dev")) {
+          document.body.style.backgroundColor = "black";
+          document.getElementById("DXLogo").hidden = true;
+          document.getElementById("chatFrame").hidden = false;
+        }
+      });
+
       function insertMessage(msg) {
         const mainDiv = document.getElementById("main");
 
@@ -213,6 +225,16 @@
   <body>
     <div id="viewer"></div>
     <div id="main" class="fade-out"></div>
-    <img src="./chatlogo.png" style="position: absolute; left: 0px; top: 0px" />
+    <img
+      id="DXLogo"
+      src="./chatlogo.png"
+      style="position: absolute; left: 0px; top: 0px"
+    />
+    <img
+      id="chatFrame"
+      src="./chatframe.png"
+      style="position: absolute; left: 0px; top: 0px"
+      hidden="true"
+    />
   </body>
 </html>
