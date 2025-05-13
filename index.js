@@ -265,8 +265,8 @@ async function createScheduledLiveStream({ faction, isPublic }) {
           scheduledStartTime: new Date(
             Date.now() + 10 * 60 * 1000
           ).toISOString(),
-          defaultLanguage: "zh-HK",
-          defaultAudioLanguage: "zh-HK",
+          defaultLanguage: "yue-HK",
+          defaultAudioLanguage: "yue-HK",
         },
         contentDetails: {
           enableEmbed: true,
@@ -358,8 +358,8 @@ async function updateVideoDetails({
             "Gundam VS",
             "Arcade Games",
           ],
-          defaultLanguage: "zh-HK",
-          defaultAudioLanguage: "zh-HK",
+          defaultLanguage: "yue-HK",
+          defaultAudioLanguage: "yue-HK",
         },
         status: {
           containsSyntheticMedia: false,
