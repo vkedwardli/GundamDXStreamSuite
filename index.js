@@ -510,7 +510,7 @@ function setupLiveChat({ broadcastId, faction }) {
     messageCache.set(messageKey, currentTime);
 
     // Process message
-    if (msg.message.startsWith("!say ")) {
+    if (msg.message.startsWith("!say ") || msg.message.startsWith("！say ")) {
       msg.message = `${megaphoneState.icon} ` + msg.message.slice(5);
       if (megaphoneState == Megaphone.ENABLED)
         textToSpeech({
