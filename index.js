@@ -7,6 +7,7 @@ import http from "http";
 import path, { join } from "path";
 import os, { tmpdir } from "os";
 import { exec, spawn } from "child_process";
+import { promisify } from "util";
 import url from "url";
 import { scheduler } from "node:timers/promises";
 import schedule from "node-schedule";
@@ -17,6 +18,7 @@ import Bottleneck from "bottleneck";
 import { randomUUID } from "crypto";
 import dotenv from "dotenv";
 dotenv.config();
+const execPromise = promisify(exec);
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -872,10 +874,6 @@ async function processTTSQueue() {
 
   try {
     if (model === TTSModel.AZURE_AI) {
-      const { exec } = await import("child_process");
-      const util = await import("util");
-      const execPromise = util.promisify(exec);
-
       await execPromise(
         `edge-playback --rate=-25% --voice "zh-HK-WanLungNeural" --text "${text}"`
       );
@@ -988,6 +986,57 @@ async function startDXOPScreen() {
   });
 }
 
+async function isSpeakerConnected(macAddress) {
+  try {
+    const { stdout } = await execPromise(
+      `btdiscovery -d"%c%" -i1 -b${macAddress}`
+    );
+    return stdout.startsWith("Yes");
+  } catch (error) {
+    console.error("Error checking speaker status:", error);
+    return false;
+  }
+}
+
+async function connectSpeaker(speakerName, macAddress) {
+  try {
+    // Check if speaker is connected
+    const isConnected = await isSpeakerConnected(macAddress);
+
+    if (isConnected) {
+      console.log(`${speakerName} is already connected`);
+      return true;
+    }
+
+    console.log(`${speakerName} is not connected. Attempting to reconnect...`);
+
+    // Remove the device
+    await execPromise(`btcom -b "${macAddress}" -r -s110b`);
+
+    // Wait briefly to ensure removal is complete
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // Connect the device
+    await execPromise(`btcom -b "${macAddress}" -c -s110b`);
+
+    // Wait briefly to ensure connection is complete
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // Verify connection
+    const isNowConnected = await isSpeakerConnected(macAddress);
+    if (isNowConnected) {
+      console.log(`${speakerName} successfully reconnected`);
+      return true;
+    } else {
+      console.error(`${speakerName} failed to reconnect`);
+      return false;
+    }
+  } catch (error) {
+    console.error("Error during reconnection process:", error);
+    return false;
+  }
+}
+
 function lofiTest() {
   let broadcastIds = ["jfKfPfyJRdk", "4xDzrJKXOOY"];
   // let broadcastIds = ["ARa-IibEfvY", "sLNGhHC0WyM"];
@@ -1002,6 +1051,9 @@ async function main() {
   await authorize();
   await obsConnect(() => {});
   startDXOPScreen();
+
+  await connectSpeaker("HK Onyx Studio", "0C:A6:94:08:F6:A1");
+
   // await startStreaming({ isPublic: false });
   // await scheduler.wait(30000);
   // await stopOBSStreaming();
