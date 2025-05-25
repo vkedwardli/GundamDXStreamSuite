@@ -197,8 +197,8 @@ const TTSModel = Object.freeze({
 });
 
 const Megaphone = Object.freeze({
-  ENABLED: { enabled: true, icon: "🔊" },
-  MUTED: { enabled: false, icon: "🔇" },
+  ENABLED: { enabled: true, icon: "🔊", gossip: "💁", anchor: "🎤" },
+  MUTED: { enabled: false, icon: "🔇", gossip: "😶", anchor: "🔕" },
 });
 
 let megaphoneState = Megaphone.ENABLED;
@@ -518,6 +518,33 @@ function setupLiveChat({ broadcastId, faction }) {
         textToSpeech({
           text: msg.plainMessage.slice(5),
           model: TTSModel.AZURE_AI,
+          voiceID: "zh-HK-WanLungNeural", // Male
+        });
+    }
+
+    if (
+      msg.message.startsWith("!gossip ") ||
+      msg.message.startsWith("！gossip ")
+    ) {
+      msg.message = `${megaphoneState.gossip} ` + msg.message.slice(8);
+      if (megaphoneState == Megaphone.ENABLED)
+        textToSpeech({
+          text: msg.plainMessage.slice(8),
+          model: TTSModel.AZURE_AI,
+          voiceID: "zh-HK-HiuMaanNeural", // Casual Female
+        });
+    }
+
+    if (
+      msg.message.startsWith("!anchor ") ||
+      msg.message.startsWith("！anchor ")
+    ) {
+      msg.message = `${megaphoneState.anchor} ` + msg.message.slice(8);
+      if (megaphoneState == Megaphone.ENABLED)
+        textToSpeech({
+          text: msg.plainMessage.slice(8),
+          model: TTSModel.AZURE_AI,
+          voiceID: "zh-HK-HiuGaaiNeural", // News Reporter Female
         });
     }
     io.emit("message", msg);
@@ -851,9 +878,9 @@ const rateLimitedPost = limiter.wrap(axios.post);
 const audioQueue = [];
 let isPlaying = false;
 
-async function textToSpeech({ text, model }) {
+async function textToSpeech({ text, model, voiceID }) {
   // Add message to queue
-  audioQueue.push({ text, model });
+  audioQueue.push({ text, model, voiceID });
 
   // If already playing, return and let the queue handle it
   if (isPlaying) {
@@ -870,12 +897,12 @@ async function processTTSQueue() {
   }
 
   isPlaying = true;
-  const { text, model } = audioQueue.shift();
+  const { text, model, voiceID } = audioQueue.shift();
 
   try {
     if (model === TTSModel.AZURE_AI) {
       await execPromise(
-        `edge-playback --rate=-25% --voice "zh-HK-WanLungNeural" --text "${text}"`
+        `edge-playback --rate=-25% --voice "${voiceID}" --text "${text}"`
       );
       console.log("Azure AI Speech playback completed");
     } else {
@@ -1014,13 +1041,13 @@ async function connectSpeaker(speakerName, macAddress) {
     await execPromise(`btcom -b "${macAddress}" -r -s110b`);
 
     // Wait briefly to ensure removal is complete
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await scheduler.wait(1000);
 
     // Connect the device
     await execPromise(`btcom -b "${macAddress}" -c -s110b`);
 
     // Wait briefly to ensure connection is complete
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await scheduler.wait(1000);
 
     // Verify connection
     const isNowConnected = await isSpeakerConnected(macAddress);
