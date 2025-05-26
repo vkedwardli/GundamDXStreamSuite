@@ -754,6 +754,14 @@ async function startStreaming({ isPublic, retryCount = 0 }) {
 
   console.log(`Started ${isPublic ? "Public" : "Unlisted"} streaming`);
 
+  if (isPublic == false) {
+    textToSpeech({
+      text: "荔枝角興趣班，上線啦！學員想睇重播嘅話，記得要scan個QR code呀",
+      model: TTSModel.AZURE_AI,
+      voiceID: "zh-HK-HiuMaanNeural", // Causal Female
+    });
+  }
+
   io.emit("streamUrls", {
     url1: `https://youtu.be/${broadcastIds[0]}`,
     url2: `https://youtu.be/${broadcastIds[1]}`,
