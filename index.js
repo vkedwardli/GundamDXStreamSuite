@@ -127,6 +127,11 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
         (blockStartStreamingUntil - Date.now()) / 1000
       )} seconds before starting again.`
     );
+    textToSpeech({
+      text: "啱啱先停播，等一分鐘先再開直播啦",
+      model: TTSModel.AZURE_AI,
+      voiceID: "zh-HK-HiuMaanNeural",
+    });
     return;
   }
 
