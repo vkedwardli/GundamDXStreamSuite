@@ -3,10 +3,8 @@ import url from "url";
 import path, { join } from "path";
 import fs from "fs/promises";
 import { Server } from "socket.io";
-import {
-  oAuth2Client,
-  TOKEN_PATH as YOUTUBE_TOKEN_PATH,
-} from "./youtubeService.js"; // Renamed to avoid conflict if TOKEN_PATH is used elsewhere
+import { oAuth2Client } from "./youtubeService.js";
+import { TOKEN_PATH as YOUTUBE_TOKEN_PATH } from "./config.js";
 
 const __dirname = import.meta.dirname;
 
