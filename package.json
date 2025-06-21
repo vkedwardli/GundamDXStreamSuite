@@ -1,5 +1,5 @@
 {
-  "name": "obsmultistreamfusion",
+  "name": "gundamdxstreamsuite",
   "version": "1.0.0",
   "description": "A NodeJS app to create multiple YouTube live streams, control OBS remotely, and concatenate live comments into a unified chat.",
   "main": "index.js",
