@@ -17,6 +17,10 @@ import sound from "sound-play";
 import Bottleneck from "bottleneck";
 import { randomUUID } from "crypto";
 import dotenv from "dotenv";
+import {
+  startRecognizeBattleResults,
+  stopRecognizeBattleResults,
+} from "./score.js";
 dotenv.config();
 const execPromise = promisify(exec);
 
@@ -408,6 +412,9 @@ async function startOBSStreaming() {
     if ((await IsLiveStreaming()) == false) {
       await obs.call("StartStream");
       console.log("OBS streaming started");
+      await obs.call("StartVirtualCam");
+      console.log("OBS Virtual Camera started");
+      await startRecognizeBattleResults();
     } else {
       console.log("OBS is streaming already!");
     }
@@ -424,6 +431,9 @@ async function stopOBSStreaming() {
     } else {
       await obs.call("StopStream");
       console.log("OBS streaming stopped");
+      await stopRecognizeBattleResults();
+      await obs.call("StopVirtualCam");
+      console.log("OBS Virtual Camera stopped");
     }
     await obs.disconnect();
     await scheduler.wait(3000);
