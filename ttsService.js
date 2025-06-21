@@ -23,16 +23,39 @@ const rateLimitedPost = limiter.wrap(axios.post);
 const audioQueue = [];
 let isPlaying = false;
 
+// Function to preprocess text for Azure AI TTS
+function preprocessAzureText(inputText) {
+  let processedText = inputText;
+  // Order matters for some replacements to avoid conflicts
+  processedText = processedText.replace(/usus/g, "呃suz"); // Must be before other 'us' if any
+  processedText = processedText.replace(/[鳩𨳊]/g, "朻");
+  processedText = processedText.replace(/[閪屄]/g, "西");
+  processedText = processedText.replace(/𨶙/g, "撚");
+  processedText = processedText.replace(/[柒𨳍]/g, "chaat");
+  processedText = processedText.replace(/仆/g, "poke");
+  processedText = processedText.replace(/矇/g, "mown");
+  processedText = processedText.replace(/咁/g, "感");
+  // Add more replacements here if needed
+  return processedText;
+}
+
 async function processTTSQueue() {
   if (isPlaying || audioQueue.length === 0) {
     return;
   }
 
   isPlaying = true;
-  const { text, model, voiceID } = audioQueue.shift();
+  let { text, model, voiceID } = audioQueue.shift(); // Make text mutable
 
   try {
     if (model === TTSModel.AZURE_AI) {
+      const originalText = text;
+      text = preprocessAzureText(text);
+      if (originalText !== text) {
+        console.log(
+          `Azure TTS: Original text: "${originalText}" | Preprocessed: "${text}"`
+        );
+      }
       await execPromise(
         `edge-playback --rate=-25% --voice "${voiceID}" --text "${text}"`
       );
