@@ -42,7 +42,7 @@ function processChatMessage(chatItem, faction, io) {
       .map((item) => (item.text ? item.text : ` :${item.alt}: `))
       .join(""),
   };
-  // console.log(`${msg.authorName}: ${msg.plainMessage}`); // Original console log
+  io.emit("chatlog", `${msg.authorName}: ${msg.plainMessage}`);
 
   const currentTime = Date.now();
   const messageKey = msg.plainMessage;

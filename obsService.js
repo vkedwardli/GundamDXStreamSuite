@@ -153,12 +153,12 @@ export async function closeOBS() {
     } else {
       console.log("OBS WebSocket was not connected, no need to disconnect.");
     }
-    await scheduler.wait(1000); // Give a moment for OBS to process disconnect
+    await scheduler.wait(3000); // Give a moment for OBS to process disconnect
 
     // Attempt to terminate OBS process
     // Note: taskkill is Windows-specific. For cross-platform, a library or OS check is needed.
     if (os.platform() === "win32") {
-      exec("taskkill /im obs64.exe /f", (error, stdout, stderr) => {
+      exec("taskkill /im obs64.exe", (error, stdout, stderr) => {
         // Added /f to force close
         if (error && !error.message.includes("not found")) {
           // Ignore "process not found"

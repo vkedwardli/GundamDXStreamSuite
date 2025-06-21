@@ -122,7 +122,7 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
 
   if (Date.now() < blockStartStreamingUntil) {
     io.emit("isStreaming", false);
-    console.log(
+    console.error(
       `Start request ignored: Please wait for ${Math.ceil(
         (blockStartStreamingUntil - Date.now()) / 1000
       )} seconds before starting again.`
@@ -137,7 +137,12 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
 
   let broadcastIds = [];
 
-  await launchOBS(); // Ensures OBS is running and connected
+  const obsLaunched = await launchOBS(); // Ensures OBS is running and connected
+  if (!obsLaunched) {
+    console.error("OBS failed to launch or connect. Aborting startStreaming.");
+    io.emit("isStreaming", false); // Ensure client UI reflects this
+    return;
+  }
 
   broadcastIds = await checkLiveStreams("active");
   if (broadcastIds.length > 0) {
@@ -254,7 +259,6 @@ async function stopStreaming(io) {
 
     currentBroadcastIds = []; // Clear current broadcast IDs
     if (io) {
-      io.emit("streamUrls", { url1: "", url2: "" }); // Clear URLs on client
       io.emit("totalviewers", 0); // Reset viewers
     }
 
@@ -284,7 +288,6 @@ async function main() {
   setupServer(handleClientConnection); // Setup server, io instance will be set in serverSetup.js
 
   await authorizeYouTube();
-  await obsConnect(); // Make sure OBS is connected initially
   await startDXOPScreen();
   await connectSpeaker("HK Onyx Studio", "0C:A6:94:08:F6:A1");
 

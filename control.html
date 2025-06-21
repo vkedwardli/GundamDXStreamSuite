@@ -317,7 +317,27 @@
       // Receive console messages from server
       socket.on("console", (message) => {
         const line = document.createElement("div");
-        line.textContent = message;
+        // Replace newline characters with <br> tags for HTML rendering
+        line.innerHTML = message.replace(/\n/g, "<br>");
+        consoleOutput.appendChild(line);
+        consoleOutput.scrollTop = consoleOutput.scrollHeight;
+      });
+
+      // Receive console error messages from server
+      socket.on("console_error", (message) => {
+        const line = document.createElement("div");
+        line.style.color = "red"; // Optionally style errors differently
+        // Replace newline characters with <br> tags for HTML rendering
+        line.innerHTML = message.replace(/\n/g, "<br>");
+        consoleOutput.appendChild(line);
+        consoleOutput.scrollTop = consoleOutput.scrollHeight;
+      });
+
+      // Highlight chat
+      socket.on("chatlog", (message) => {
+        const line = document.createElement("div");
+        line.style.color = "yellow";
+        line.textContent = `${message}`;
         consoleOutput.appendChild(line);
         consoleOutput.scrollTop = consoleOutput.scrollHeight;
       });
