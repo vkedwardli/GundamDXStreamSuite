@@ -1,4 +1,7 @@
 # GundamDXStreamSuite
+<p align=center><img src="https://github.com/vkedwardli/GundamDXStreamSuite/blob/main/lckzaku.png" width="300" /></p>
+<img src="https://github.com/vkedwardli/GundamDXStreamSuite/blob/main/hardware/setup.jpeg" />
+<img src="https://github.com/vkedwardli/GundamDXStreamSuite/blob/main/hardware/dxop.jpeg" />
 
 GundamDXStreamSuite is a comprehensive automation tool designed to manage and enhance live streaming of "Mobile Suit Gundam: Federation vs. Zeon DX" arcade game sessions, particularly for setups involving dual perspectives (Federation and Zeon). It automates stream creation on YouTube, OBS control, live chat aggregation, TTS (Text-to-Speech) from chat commands, and game outcome detection via OCR.
 
