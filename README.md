@@ -35,7 +35,7 @@ Gundam DX Stream Suite is a comprehensive automation tool designed to manage and
 4.  **Unified Live Chat Aggregation:**
 
     - **Dual Chat Fetching:** Fetches YouTube live chat messages from both faction streams.
-    - **Message Merging:** (Intended for display in `comments.html` for displaying in both live streams)
+    - **Message Merging:** (Intended for displaying in both live streams using `comments.html`)
     - **Duplicate Prevention:** Basic caching to avoid displaying identical messages received close together.
 
 5.  **Interactive TTS (Text-to-Speech) from Chat:**
@@ -46,7 +46,7 @@ Gundam DX Stream Suite is a comprehensive automation tool designed to manage and
     - **Audio Queue & Rate Limiting:** Manages TTS requests sequentially with API rate limits.
     - **Megaphone Toggle:** Global TTS enable/disable via a control interface.
 
-6.  **Web-Based Control Interface (`control.html`):**
+6.  **Touchscreen Control Interface:**
 
     - **Stream Control:** Buttons for starting (Public/Unlisted) and stopping streams.
     - **Real-time Console Output:** Displays server-side logs.
@@ -138,7 +138,7 @@ node index.js
 - `ttsService.js`: Text-to-Speech processing using Azure/MiniMax.
 - `systemUtils.js`: Miscellaneous utilities (DXOP screen, Bluetooth speaker).
 - `control.html`: Web-based control panel.
-- `comments.html`: (Assumed) HTML page for displaying fused chat messages.
+- `comments.html`: HTML page for displaying fused chat messages.
 
 ## Customization & Adaptation
 
