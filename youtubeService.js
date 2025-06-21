@@ -196,6 +196,7 @@ export async function updateVideoDetails({
 
 🧑‍🎨 Design by zetaeddie
 🧑‍💻 Setup by Edw
+🔗 Source code：https://github.com/vkedwardli/GundamDXStreamSuite
 
 #Gundam #GundamDX #連ジ #arcade #GundamVS`,
           categoryId: "20",
