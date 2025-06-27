@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+  <!-- OBS x=0, y=684, w=1920, h=80 -->
+  <head>
+    <title>Scoreboard</title>
+    <meta charset="UTF-8" />
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: transparent;
+        width: 1920px;
+        overflow: hidden;
+        font-family: "aAtmospheric", sans-serif;
+        font-size: 20px;
+        color: white;
+      }
+      .score-container {
+        position: absolute;
+        text-align: center;
+      }
+      #fed-wins {
+        left: 727.5px;
+        top: 28px;
+        width: 54px;
+        height: 22px;
+      }
+      #zeon-wins {
+        left: 1136px;
+        top: 28px;
+        width: 54px;
+        height: 22px;
+      }
+      .streak-container {
+        position: absolute;
+        height: 73px;
+        display: flex;
+        align-items: center;
+      }
+      #fed-streak {
+        left: 0px;
+        top: 0px;
+        width: 672px;
+        justify-content: flex-end; /* Right-aligned */
+      }
+      #zeon-streak {
+        left: 1248px;
+        top: 0px;
+        width: 672px;
+        justify-content: flex-start; /* Left-aligned */
+      }
+      .streak-container img {
+        height: 100%; /* Star height will fill the container */
+        width: auto;
+        margin: 0 -12px; /* Negative margin to overlap glowing effect */
+      }
+
+      @keyframes new-star-animation {
+        0% {
+          opacity: 0;
+          transform: scale(0.3) rotate(-180deg);
+        }
+        60% {
+          opacity: 1;
+          transform: scale(1.2) rotate(10deg);
+        }
+        100% {
+          transform: scale(1) rotate(0deg);
+        }
+      }
+
+      .new-star {
+        animation: new-star-animation 0.5s ease-out;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Total Wins Display -->
+    <div id="fed-wins" class="score-container">0</div>
+    <div id="zeon-wins" class="score-container">0</div>
+
+    <!-- Consecutive Wins (Stars) Display -->
+    <div id="fed-streak" class="streak-container">
+      <!-- Stars will be inserted here by JS -->
+    </div>
+    <div id="zeon-streak" class="streak-container">
+      <!-- Stars will be inserted here by JS -->
+    </div>
+
+    <script src="./socket.io.min.js"></script>
+    <script>
+      const socket = io();
+
+      const fedWinsEl = document.getElementById("fed-wins");
+      const zeonWinsEl = document.getElementById("zeon-wins");
+      const fedStreakEl = document.getElementById("fed-streak");
+      const zeonStreakEl = document.getElementById("zeon-streak");
+
+      socket.on("connect", () => {
+        console.log("Connected to server, requesting initial game state.");
+        socket.emit("getInitialGameState");
+      });
+
+      let previousState = {
+        streaks: {
+          Federation: 0,
+          Zeon: 0,
+        },
+      };
+
+      socket.on("battleResult", (data) => {
+        if (data && data.state) {
+          updateScoreboard(data.state);
+          previousState = data.state; // Store the new state
+        } else {
+          console.error("Invalid battleResult data received:", data);
+        }
+      });
+
+      function updateScoreboard(state) {
+        // Update total wins
+        fedWinsEl.textContent = state.totalWins.Federation || 0;
+        zeonWinsEl.textContent = state.totalWins.Zeon || 0;
+
+        // Update Federation streak stars
+        updateStreak(
+          fedStreakEl,
+          previousState.streaks.Federation,
+          state.streaks.Federation
+        );
+
+        // Update Zeon streak stars
+        updateStreak(
+          zeonStreakEl,
+          previousState.streaks.Zeon,
+          state.streaks.Zeon
+        );
+      }
+
+      function updateStreak(container, prevCount, newCount) {
+        if (newCount > prevCount) {
+          // Add a new star with animation
+          const newStar = document.createElement("img");
+          newStar.src = "./images/star.png";
+          newStar.classList.add("new-star");
+          // Remove the animation class after it finishes to prevent re-triggering
+          newStar.addEventListener("animationend", () => {
+            newStar.classList.remove("new-star");
+          });
+          container.appendChild(newStar);
+        } else if (newCount < prevCount) {
+          // Rebuild the entire list if streak is reset or reduced
+          let starsHTML = "";
+          for (let i = 0; i < newCount; i++) {
+            starsHTML += '<img src="./images/star.png" />';
+          }
+          container.innerHTML = starsHTML;
+        }
+        // If newCount === prevCount, do nothing.
+      }
+    </script>
+  </body>
+</html>

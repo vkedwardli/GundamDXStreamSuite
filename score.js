@@ -3,6 +3,8 @@ import { PassThrough } from "stream";
 import { spawn } from "child_process";
 import fs from "fs";
 import os from "os";
+import { io } from "./serverSetup.js";
+import { scheduler } from "timers/promises";
 
 // Define the four regions in the stacked image (562x105 each)
 const targetAreas = [
@@ -155,6 +157,11 @@ const getFormattedTime = () =>
     timeZone: "Asia/Hong_Kong", // Or your target timezone
   });
 
+// Broadcasts the current game state to the client via a prefixed console log
+const broadcastGameState = () => {
+  io.emit("battleResult", { state: gameState });
+};
+
 // Prints the overall battle statistics with the win ratio as a percentage.
 const logBattleSummary = () => {
   const { totalBattles, totalDraws, totalWins } = gameState;
@@ -197,6 +204,7 @@ const resetStreaks = (reason) => {
   gameState.streaks.Zeon = 0;
   gameState.streaks.Federation = 0;
   gameState.lastWinner = null;
+  broadcastGameState(); // Broadcast the updated state
   // Note: Total stats are NOT reset here, only streaks.
 };
 
@@ -226,6 +234,7 @@ const processBattleOutcome = () => {
       `${getFormattedTime()}: Ignoring incomplete detection, stats unchanged:`,
       Array.from(detectedAreas)
     );
+    broadcastGameState(); // Broadcast state even on incomplete matches to clear stars
     return;
   }
 
@@ -238,6 +247,7 @@ const processBattleOutcome = () => {
     resetStreaks("a draw");
     console.log(`${getFormattedTime()}: Game ended in a DRAW.`);
     logBattleSummary(); // Log the summary after a draw
+    broadcastGameState(); // Broadcast the updated state
     return;
   }
 
@@ -260,8 +270,8 @@ const processBattleOutcome = () => {
   // --- 3. Log the overall summary ---
   logBattleSummary();
 
-  // Example of emitting data via Socket.IO
-  // io.emit('battleResult', { state: gameState });
+  // --- 4. Broadcast the new game state ---
+  broadcastGameState();
 };
 
 async function startRecognizeBattleResults() {
@@ -273,6 +283,7 @@ async function startRecognizeBattleResults() {
   });
 
   console.log("OCR worker started. Monitoring for battle results...");
+  broadcastGameState(); // Broadcast initial state on start
 
   intervalId = setInterval(async () => {
     try {
@@ -334,19 +345,38 @@ async function stopRecognizeBattleResults() {
     console.log("Worker terminated.");
   }
 
-  // // 3. (Optional but Recommended) Save the final state
-  // try {
-  //   console.log("Saving final game state to 'gameState_final.json'...");
-  //   fs.writeFileSync(
-  //     "gameState_final.json",
-  //     JSON.stringify(gameState, null, 2)
-  //   );
-  //   console.log("State saved successfully.");
-  // } catch (err) {
-  //   console.error("Failed to save final game state:", err);
-  // }
-
   console.log("Battle recognition process has been shut down.");
 }
 
-export { startRecognizeBattleResults, stopRecognizeBattleResults };
+// This function is for testing animation and position placement only.
+// It can be called from another module (like serverSetup) when a new client connects.
+async function broadcastDummyGameState() {
+  let getRandomInt = (min, max) => {
+    min = Math.ceil(min);
+    max = Math.floor(max);
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  };
+
+  gameState.totalWins.Federation = 12;
+  gameState.totalWins.Zeon = 34;
+  gameState.streaks.Federation = 0;
+  gameState.streaks.Zeon = 0;
+  broadcastGameState();
+
+  await scheduler.wait(3000);
+  gameState.totalWins.Zeon++;
+  gameState.streaks.Zeon++;
+  broadcastGameState();
+
+  await scheduler.wait(3000);
+  gameState.totalWins.Zeon++;
+  gameState.streaks.Zeon++;
+  broadcastGameState();
+}
+
+export {
+  startRecognizeBattleResults,
+  stopRecognizeBattleResults,
+  broadcastGameState,
+  broadcastDummyGameState,
+};

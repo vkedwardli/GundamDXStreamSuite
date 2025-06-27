@@ -29,7 +29,7 @@ import {
 } from "./chatService.js";
 import { setupServer, io as socketIoInstance } from "./serverSetup.js"; // Import io
 import { startDXOPScreen, connectSpeaker, lofiTest } from "./systemUtils.js";
-
+import { broadcastGameState, broadcastDummyGameState } from "./score.js";
 // --- Global State (moved from various places, consider if these need to be in a dedicated state module later) ---
 let megaphoneState = Megaphone.ENABLED;
 let blockStartStreamingUntil = 0;
@@ -113,6 +113,11 @@ function handleClientConnection(client, io) {
 
   client.on("getMegaphoneStatus", () => {
     io.emit("megaphoneStatus", megaphoneState);
+  });
+
+  client.on("getInitialGameState", () => {
+    console.log("Client requested initial game state.");
+    broadcastGameState();
   });
 }
 
