@@ -95,7 +95,7 @@ function handleClientConnection(client, io) {
           timeZone: "Asia/Hong_Kong",
         }),
         authorName: "現場發動滅聲",
-        profilePic: "mute.png", // Ensure this file is served
+        profilePic: "images/mute.png", // Ensure this file is served
         message:
           "我真係唔得喇，你唔好再... 💥 你老闆話你真係，我已經話咗唔得嫁啦，你仲要喔噢喔噢咁，完全唔理我幾咁難受嘅你！😡",
         plainMessage:

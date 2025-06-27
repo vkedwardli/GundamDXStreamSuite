@@ -1,6 +1,6 @@
 # Gundam DX Stream Suite
 
-<p align=center><img src="https://github.com/vkedwardli/GundamDXStreamSuite/blob/main/lckzaku.png" width="300" /></p>
+<p align=center><img src="https://github.com/vkedwardli/GundamDXStreamSuite/blob/main/images/lckzaku.png" width="300" /></p>
 <img src="https://github.com/vkedwardli/GundamDXStreamSuite/blob/main/docs/setup.jpeg" />
 <img src="https://github.com/vkedwardli/GundamDXStreamSuite/blob/main/docs/dxop.jpeg" />
 
