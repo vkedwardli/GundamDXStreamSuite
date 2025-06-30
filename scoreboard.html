@@ -126,18 +126,20 @@
         updateStreak(
           fedStreakEl,
           previousState.streaks.Federation,
-          state.streaks.Federation
+          state.streaks.Federation,
+          true // Prepend for Federation
         );
 
         // Update Zeon streak stars
         updateStreak(
           zeonStreakEl,
           previousState.streaks.Zeon,
-          state.streaks.Zeon
+          state.streaks.Zeon,
+          false // Append for Zeon
         );
       }
 
-      function updateStreak(container, prevCount, newCount) {
+      function updateStreak(container, prevCount, newCount, shouldPrepend) {
         if (newCount > prevCount) {
           // Add a new star with animation
           const newStar = document.createElement("img");
@@ -147,7 +149,12 @@
           newStar.addEventListener("animationend", () => {
             newStar.classList.remove("new-star");
           });
-          container.appendChild(newStar);
+
+          if (shouldPrepend) {
+            container.insertBefore(newStar, container.firstChild);
+          } else {
+            container.appendChild(newStar);
+          }
         } else if (newCount < prevCount) {
           // Rebuild the entire list if streak is reset or reduced
           let starsHTML = "";
