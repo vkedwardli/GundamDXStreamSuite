@@ -5,6 +5,8 @@ import fs from "fs";
 import os from "os";
 import { io } from "./serverSetup.js";
 import { scheduler } from "timers/promises";
+import { textToSpeech } from "./ttsService.js";
+import { TTSModel, Faction } from "./config.js";
 
 // Define the four regions in the stacked image (562x105 each)
 const targetAreas = [
@@ -130,23 +132,35 @@ const GAMEOVER_DISPLAY_CLEAR_DELAY_MS = 2000; // 2 seconds
 const gameState = {
   // Counters for the current winning streak
   streaks: {
-    Zeon: 0,
-    Federation: 0,
+    [Faction.ZEON.value]: 0,
+    [Faction.FEDERATION.value]: 0,
   },
   // Lifetime counters for all valid 2v2 matches
   totalWins: {
-    Zeon: 0,
-    Federation: 0,
+    [Faction.ZEON.value]: 0,
+    [Faction.FEDERATION.value]: 0,
   },
   totalBattles: 0,
   totalDraws: 0,
-  lastWinner: null, // "Zeon" | "Federation" | null
+  lastWinner: null, // Faction object
   lastOutcomeTime: 0, // Timestamp of the last processed win/draw
 };
 
 // --- Battle Detection Buffering ---
 let detectionBuffer = new Set();
 let processOutcomeTimeoutId = null;
+
+const streakMessages = {
+  3: "帽子戲法",
+  4: "大四喜",
+  5: "五福臨門",
+  6: "六六無窮",
+  7: "七星報喜",
+  8: "八仙過海",
+  9: "九霄雲外",
+  10: "十全十美",
+};
+const superStreakMessage = "數唔到喇，打L死人咩";
 
 // Helper for consistent time formatting
 const getFormattedTime = () =>
@@ -165,8 +179,8 @@ const broadcastGameState = () => {
 // Prints the overall battle statistics with the win ratio as a percentage.
 const logBattleSummary = () => {
   const { totalBattles, totalDraws, totalWins } = gameState;
-  const fedWins = totalWins.Federation;
-  const zeonWins = totalWins.Zeon;
+  const fedWins = totalWins[Faction.FEDERATION.value];
+  const zeonWins = totalWins[Faction.ZEON.value];
   const totalWinGames = fedWins + zeonWins;
 
   let ratioString;
@@ -201,8 +215,8 @@ const resetStreaks = (reason) => {
     // Only log if there was an active streak
     console.log(`${getFormattedTime()}: Win streak reset due to ${reason}.`);
   }
-  gameState.streaks.Zeon = 0;
-  gameState.streaks.Federation = 0;
+  gameState.streaks[Faction.ZEON.value] = 0;
+  gameState.streaks[Faction.FEDERATION.value] = 0;
   gameState.lastWinner = null;
   broadcastGameState(); // Broadcast the updated state
   // Note: Total stats are NOT reset here, only streaks.
@@ -224,9 +238,9 @@ const processBattleOutcome = () => {
   if (zeonLost && federationLost) {
     outcome = "Draw";
   } else if (zeonLost) {
-    outcome = "Federation"; // Zeon lost, so Federation wins
+    outcome = Faction.FEDERATION; // Zeon lost, so Federation wins
   } else if (federationLost) {
-    outcome = "Zeon"; // Federation lost, so Zeon wins
+    outcome = Faction.ZEON; // Federation lost, so Zeon wins
   } else {
     // Incomplete match (e.g., only 1 player, or 1 from each side)
     resetStreaks("an incomplete match");
@@ -252,25 +266,48 @@ const processBattleOutcome = () => {
   }
 
   const winner = outcome;
-  const loser = winner === "Zeon" ? "Federation" : "Zeon";
+  const loser = winner === Faction.ZEON ? Faction.FEDERATION : Faction.ZEON;
 
   // --- 1. Update TOTAL win counts ---
-  gameState.totalWins[winner]++;
+  gameState.totalWins[winner.value]++;
 
   // --- 2. Update STREAK counts ---
-  gameState.streaks[loser] = 0;
-  gameState.streaks[winner]++;
+  gameState.streaks[loser.value] = 0;
+  const newStreak = ++gameState.streaks[winner.value];
   gameState.lastWinner = winner;
 
-  const outputMessage = `${getFormattedTime()}: ${winner} wins! Consecutive wins: ${
-    gameState.streaks[winner]
-  }`;
+  const outputMessage = `${getFormattedTime()}: ${
+    winner.value
+  } wins! Consecutive wins: ${newStreak}`;
   console.log(outputMessage);
 
-  // --- 3. Log the overall summary ---
+  // --- 3. Handle Streak Announcements ---
+  const streakMessage =
+    newStreak > 10 ? superStreakMessage : streakMessages[newStreak];
+  if (streakMessage) {
+    // Play TTS
+    textToSpeech({
+      text: streakMessage,
+      model: TTSModel.AZURE_AI,
+      voiceID: "zh-HK-HiuMaanNeural", // Gossip voice
+    });
+
+    // Emit chat message
+    const msg = {
+      isFederation: winner === Faction.FEDERATION,
+      time: getFormattedTime(),
+      authorName: `${winner.displayName}連勝！`,
+      profilePic: "images/star.png", // Using star icon for the message
+      message: streakMessage,
+      plainMessage: streakMessage,
+    };
+    io.emit("message", msg);
+  }
+
+  // --- 4. Log the overall summary ---
   logBattleSummary();
 
-  // --- 4. Broadcast the new game state ---
+  // --- 5. Broadcast the new game state ---
   broadcastGameState();
 };
 
@@ -357,20 +394,20 @@ async function broadcastDummyGameState() {
     return Math.floor(Math.random() * (max - min + 1)) + min;
   };
 
-  gameState.totalWins.Federation = 12;
-  gameState.totalWins.Zeon = 34;
-  gameState.streaks.Federation = 0;
-  gameState.streaks.Zeon = 0;
+  gameState.totalWins[Faction.FEDERATION.value] = 12;
+  gameState.totalWins[Faction.ZEON.value] = 34;
+  gameState.streaks[Faction.FEDERATION.value] = 0;
+  gameState.streaks[Faction.ZEON.value] = 0;
   broadcastGameState();
 
   await scheduler.wait(3000);
-  gameState.totalWins.Zeon++;
-  gameState.streaks.Zeon++;
+  gameState.totalWins[Faction.ZEON.value]++;
+  gameState.streaks[Faction.ZEON.value]++;
   broadcastGameState();
 
   await scheduler.wait(3000);
-  gameState.totalWins.Zeon++;
-  gameState.streaks.Zeon++;
+  gameState.totalWins[Faction.ZEON.value]++;
+  gameState.streaks[Faction.ZEON.value]++;
   broadcastGameState();
 }
 

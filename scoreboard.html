@@ -103,8 +103,12 @@
 
       let previousState = {
         streaks: {
-          Federation: 0,
-          Zeon: 0,
+          federation: 0,
+          zeon: 0,
+        },
+        totalWins: {
+          federation: 0,
+          zeon: 0,
         },
       };
 
@@ -119,22 +123,22 @@
 
       function updateScoreboard(state) {
         // Update total wins
-        fedWinsEl.textContent = state.totalWins.Federation || 0;
-        zeonWinsEl.textContent = state.totalWins.Zeon || 0;
+        fedWinsEl.textContent = state.totalWins.federation || 0;
+        zeonWinsEl.textContent = state.totalWins.zeon || 0;
 
         // Update Federation streak stars
         updateStreak(
           fedStreakEl,
-          previousState.streaks.Federation,
-          state.streaks.Federation,
+          previousState.streaks.federation,
+          state.streaks.federation,
           true // Prepend for Federation
         );
 
         // Update Zeon streak stars
         updateStreak(
           zeonStreakEl,
-          previousState.streaks.Zeon,
-          state.streaks.Zeon,
+          previousState.streaks.zeon,
+          state.streaks.zeon,
           false // Append for Zeon
         );
       }
