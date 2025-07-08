@@ -87,6 +87,10 @@ export async function connectSpeaker(speakerName, macAddress) {
     const isConnected = await isSpeakerConnected(macAddress);
     if (isConnected) {
       console.log(`${speakerName} is already connected.`);
+      exec("tone.bat", (error) => {
+        if (error)
+          console.error(`Error playing keep-alive tone: ${error.message}`);
+      });
       return true;
     }
 
@@ -100,6 +104,10 @@ export async function connectSpeaker(speakerName, macAddress) {
     const isNowConnected = await isSpeakerConnected(macAddress);
     if (isNowConnected) {
       console.log(`${speakerName} successfully reconnected.`);
+      exec("tone.bat", (error) => {
+        if (error)
+          console.error(`Error playing keep-alive tone: ${error.message}`);
+      });
       return true;
     } else {
       console.error(
