@@ -57,7 +57,7 @@ async function processTTSQueue() {
         );
       }
       await execPromise(
-        `edge-playback --rate=-25% --voice "${voiceID}" --text "${text}"`
+        `edge-playback --rate=-30% --volume=+100% --voice "${voiceID}" --text "${text}"`
       );
       console.log("Azure AI Speech playback completed");
     } else {
