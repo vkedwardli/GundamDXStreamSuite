@@ -98,13 +98,17 @@ export async function launchOBS() {
           "OBS Studio is not running or not connected, attempting to start and connect..."
         );
         try {
-          exec(`"${obsPath}"`, { cwd: obsDir }, (error, stdout, stderr) => {
-            if (error) {
-              console.error(`Error launching OBS: ${error.message}`);
-              // No reject here, as we'll try to connect anyway
+          exec(
+            `"${obsPath}" --disable-shutdown-check`,
+            { cwd: obsDir },
+            (error, stdout, stderr) => {
+              if (error) {
+                console.error(`Error launching OBS: ${error.message}`);
+                // No reject here, as we'll try to connect anyway
+              }
+              // Don't wait for OBS to fully load, just proceed to connect attempt
             }
-            // Don't wait for OBS to fully load, just proceed to connect attempt
-          });
+          );
 
           // Reset capture card DirectShow settings (fire and forget)
           exec(
