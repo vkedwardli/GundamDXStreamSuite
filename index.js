@@ -21,6 +21,8 @@ import {
   stopOBSStreamingAndRecognition,
   launchOBS,
   closeOBS,
+  toggleCam,
+  getAllCamsStatus,
 } from "./obsService.js";
 import {
   startLiveChatAndViewerCount,
@@ -118,6 +120,16 @@ function handleClientConnection(client, io) {
   client.on("getInitialGameState", () => {
     console.log("Client requested initial game state.");
     broadcastGameState();
+  });
+
+  client.on("toggleCam", async (cameraName) => {
+    console.log(`Socket.IO: Received toggleCam request for ${cameraName}`);
+    await toggleCam(cameraName);
+  });
+
+  client.on("getCamStatuses", async () => {
+    const statuses = await getAllCamsStatus();
+    client.emit("allCamStatuses", statuses);
   });
 }
 

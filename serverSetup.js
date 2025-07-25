@@ -35,6 +35,16 @@ export function setupServer(onClientConnected) {
         res.writeHead(400);
         res.end("No authorization code provided for YouTube OAuth");
       }
+    } else if (parsedUrl.pathname === "/remote") {
+      const filePath = path.join(__dirname, "remote.html");
+      try {
+        const data = await fs.readFile(filePath);
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(data);
+      } catch (err) {
+        res.writeHead(404);
+        res.end("Remote control page not found.");
+      }
     } else {
       // Serve static files
       const requestedPath =

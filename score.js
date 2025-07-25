@@ -7,6 +7,7 @@ import { io } from "./serverSetup.js";
 import { scheduler } from "timers/promises";
 import { textToSpeech } from "./ttsService.js";
 import { TTSModel, Faction } from "./config.js";
+import { enableCam } from "./obsService.js";
 
 // Define the four regions in the stacked image (562x105 each)
 const targetAreas = [
@@ -267,6 +268,17 @@ const processBattleOutcome = () => {
 
   const winner = outcome;
   const loser = winner === Faction.ZEON ? Faction.FEDERATION : Faction.ZEON;
+
+  // --- Camera Control on Score ---
+  if (winner === Faction.FEDERATION) {
+    // Zeon lost, enable their cameras
+    enableCam("zeon-left");
+    enableCam("zeon-right");
+  } else if (winner === Faction.ZEON) {
+    // Federation lost, enable their cameras
+    enableCam("federation-left");
+    enableCam("federation-right");
+  }
 
   // --- 1. Update TOTAL win counts ---
   gameState.totalWins[winner.value]++;

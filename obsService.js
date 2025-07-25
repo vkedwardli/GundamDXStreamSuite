@@ -8,6 +8,7 @@ import {
   startRecognizeBattleResults,
   stopRecognizeBattleResults,
 } from "./score.js"; // Assuming score.js is in the same directory
+import { io } from "./serverSetup.js";
 
 export const obs = new OBSWebSocket();
 
@@ -183,4 +184,136 @@ export async function closeOBS() {
   } catch (error) {
     console.error("Error closing OBS:", error);
   }
+}
+
+const cameraMapping = {
+  "federation-left": {
+    Scene: 13,
+    "Vertical Scene": 12,
+  },
+  "federation-right": {
+    Scene: 14,
+    "Vertical Scene": 13,
+  },
+  "zeon-left": {
+    Scene: 12,
+    "Vertical Scene": 9,
+  },
+  "zeon-right": {
+    Scene: 11,
+    "Vertical Scene": 11,
+  },
+};
+
+async function setCamState(cameraName, enabled) {
+  if (!cameraMapping[cameraName]) {
+    console.error(`Invalid camera name: ${cameraName}`);
+    return;
+  }
+
+  try {
+    if (!obs.identified) {
+      await obsConnect();
+    }
+
+    const scenes = cameraMapping[cameraName];
+    for (const sceneName in scenes) {
+      const sceneItemId = scenes[sceneName];
+      await obs.call("SetSceneItemEnabled", {
+        sceneName: sceneName,
+        sceneItemId: sceneItemId,
+        sceneItemEnabled: enabled,
+      });
+      console.log(
+        `Set '${cameraName}' in scene '${sceneName}' to ${
+          enabled ? "enabled" : "disabled"
+        }`
+      );
+    }
+
+    // After successfully changing the state, broadcast the update to all clients.
+    if (io) {
+      io.emit("camStatusUpdate", { cameraName, isEnabled: enabled });
+    }
+  } catch (error) {
+    console.error(`Error setting camera state for ${cameraName}:`, error);
+  }
+}
+
+export async function toggleCam(cameraName) {
+  if (!cameraMapping[cameraName]) {
+    console.error(`Invalid camera name: ${cameraName}`);
+    return;
+  }
+
+  try {
+    if (!obs.identified) {
+      await obsConnect();
+    }
+
+    const scenes = cameraMapping[cameraName];
+    // Get the current state from the first scene in the mapping
+    const firstSceneName = Object.keys(scenes)[0];
+    const firstSceneItemId = scenes[firstSceneName];
+
+    const { sceneItemEnabled } = await obs.call("GetSceneItemEnabled", {
+      sceneName: firstSceneName,
+      sceneItemId: firstSceneItemId,
+    });
+
+    const newState = !sceneItemEnabled;
+    await setCamState(cameraName, newState);
+    return newState;
+  } catch (error) {
+    console.error(`Error toggling camera ${cameraName}:`, error);
+    return null;
+  }
+}
+
+export async function enableCam(cameraName) {
+  await setCamState(cameraName, true);
+}
+
+export async function disableCam(cameraName) {
+  await setCamState(cameraName, false);
+}
+
+export async function getCamStatus(cameraName) {
+  if (!cameraMapping[cameraName]) {
+    console.error(`Invalid camera name: ${cameraName}`);
+    return null;
+  }
+
+  try {
+    if (!obs.identified) {
+      await obsConnect();
+    }
+
+    const scenes = cameraMapping[cameraName];
+    // We only need to check one scene, as they should be in sync.
+    const firstSceneName = Object.keys(scenes)[0];
+    const firstSceneItemId = scenes[firstSceneName];
+
+    const { sceneItemEnabled } = await obs.call("GetSceneItemEnabled", {
+      sceneName: firstSceneName,
+      sceneItemId: firstSceneItemId,
+    });
+
+    return sceneItemEnabled;
+  } catch (error) {
+    console.error(`Error getting status for camera ${cameraName}:`, error);
+    return null;
+  }
+}
+
+export async function getAllCamsStatus() {
+  if (!obs.identified) {
+    await obsConnect();
+  }
+
+  const statuses = {};
+  for (const cameraName in cameraMapping) {
+    statuses[cameraName] = await getCamStatus(cameraName);
+  }
+  return statuses;
 }
