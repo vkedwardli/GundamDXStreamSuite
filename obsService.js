@@ -51,10 +51,11 @@ export async function startOBSStreamingAndRecognition() {
       console.log("OBS streaming started");
       await obs.call("StartVirtualCam");
       console.log("OBS Virtual Camera started");
-      await startRecognizeBattleResults();
     } else {
-      console.log("OBS is streaming already!");
+      console.log("OBS is streaming already, re-initiating recognition...");
     }
+    // Always start recognition; it's a local process needed for both new and resumed streams.
+    await startRecognizeBattleResults();
   } catch (error) {
     console.error("Error starting OBS stream/recognition:", error);
     // Potentially try to stop virtual cam if stream start failed but cam started
