@@ -9,6 +9,19 @@ import { textToSpeech } from "./ttsService.js";
 import { TTSModel, Faction } from "./config.js";
 import { enableCam } from "./obsService.js";
 
+const recentlyDisabledCams = new Map();
+const MANUAL_DISABLE_LOCKOUT_MS = 10000; // 10 seconds
+
+// This function is called from serverSetup.js when a user manually disables a camera
+const markCameraAsDisabled = (cameraName) => {
+  console.log(
+    `${getFormattedTime()}: Manually disabling ${cameraName}, locking for ${
+      MANUAL_DISABLE_LOCKOUT_MS / 1000
+    }s.`
+  );
+  recentlyDisabledCams.set(cameraName, Date.now());
+};
+
 // Define the four regions in the stacked image (562x105 each)
 const targetAreas = [
   { y: 0, height: 105, name: "Area1" },
@@ -270,14 +283,30 @@ const processBattleOutcome = () => {
   const loser = winner === Faction.ZEON ? Faction.FEDERATION : Faction.ZEON;
 
   // --- Camera Control on Score ---
+  const resetCamera = (cameraName) => {
+    const lastDisabledTime = recentlyDisabledCams.get(cameraName);
+    if (lastDisabledTime) {
+      const timeSinceDisabled = Date.now() - lastDisabledTime;
+      if (timeSinceDisabled < MANUAL_DISABLE_LOCKOUT_MS) {
+        console.log(
+          `${getFormattedTime()}: Skipping re-enable for ${cameraName} due to recent manual disable.`
+        );
+        return; // Skip re-enabling
+      }
+      // Lockout has expired, remove the flag so it can be enabled next time
+      recentlyDisabledCams.delete(cameraName);
+    }
+    enableCam(cameraName);
+  };
+
   if (winner === Faction.FEDERATION) {
     // Zeon lost, enable their cameras
-    enableCam("zeon-left");
-    enableCam("zeon-right");
+    resetCamera("zeon-left");
+    resetCamera("zeon-right");
   } else if (winner === Faction.ZEON) {
     // Federation lost, enable their cameras
-    enableCam("federation-left");
-    enableCam("federation-right");
+    resetCamera("federation-left");
+    resetCamera("federation-right");
   }
 
   // --- 1. Update TOTAL win counts ---
@@ -428,4 +457,5 @@ export {
   stopRecognizeBattleResults,
   broadcastGameState,
   broadcastDummyGameState,
+  markCameraAsDisabled,
 };
