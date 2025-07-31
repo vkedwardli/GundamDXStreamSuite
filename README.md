@@ -4,148 +4,57 @@
 <img src="https://github.com/vkedwardli/GundamDXStreamSuite/blob/main/docs/setup.jpeg" />
 <img src="https://github.com/vkedwardli/GundamDXStreamSuite/blob/main/docs/dxop.jpeg" />
 
-Gundam DX Stream Suite is a comprehensive automation tool designed to manage and enhance live streaming of "Mobile Suit Gundam: Federation vs. Zeon DX" arcade game sessions, particularly for setups involving dual perspectives (Federation and Zeon). It automates stream creation on YouTube, OBS control, live chat aggregation, TTS (Text-to-Speech) from chat commands, and game outcome detection via OCR.
+Gundam DX Stream Suite is an automation tool for live streaming "Mobile Suit Gundam: Federation vs. Zeon DX" arcade games. It's designed for a dual-perspective setup (Federation and Zeon), automating everything from stream creation to score tracking.
 
-### You can watch our live stream from: [https://www.youtube.com/@荔枝角 GundamDX](https://www.youtube.com/@%E8%8D%94%E6%9E%9D%E8%A7%92GundamDX)
+### Watch our live stream: [荔枝角 GundamDX on YouTube](https://www.youtube.com/@%E8%8D%94%E6%9E%9D%E8%A7%92GundamDX)
 
-###### **Disclaimer:** This project is tailored to a specific hardware and software setup used for streaming Gundam DX from an arcade environment. While core concepts might be adaptable, many features (especially screen capture coordinates, Windows-specific utilities, and hardcoded paths) will require significant modification for other use cases or environments.
+###### **Disclaimer:** This tool is built for a specific arcade streaming setup. Using it for other games or on different systems will require technical adjustments.
 
-## Core Features
+## Key Features
 
-1.  **Dual YouTube Live Stream Management (Federation vs. Zeon):**
+- **Automated Dual Streaming:** Automatically creates and manages two separate YouTube live streams (one for each faction) with a single click.
+- **AI-Powered Scorekeeping:** Uses screen recognition (OCR) to automatically detect the winner of each match, keeping track of scores, win rates, and streaks.
+- **Unified Chat & TTS:** Combines the live chat from both streams into one view. Viewers can use chat commands like `!say` to have their messages read out loud by a Text-to-Speech voice.
+- **Simple Control Panel:** A touch-friendly web interface to start/stop streams, view logs, and control features like TTS.
 
-    - **Automated Stream Creation:** Creates two distinct YouTube live events (Federation & Zeon) with predefined titles, descriptions (including links to switch perspectives), and gaming category.
-    - **Stream Binding:** Binds broadcasts to pre-existing YouTube live stream configurations in YouTube Studio.
-    - **Dynamic Title Updates:** Updates video titles with the current date.
-    - **Public/Unlisted Control:** Allows starting streams as public or unlisted.
+## Getting Started
 
-2.  **OBS Orchestration:**
+### Prerequisites
 
-    - **Automated OBS Launch & Termination:** Launches OBS Studio (if not running), connects via WebSocket and can close OBS after streaming.
-    - **Automated Stream Start/Stop:** Controls OBS stream output.
-    - **Virtual Camera Control:** Manages the OBS Virtual Camera, used for game capture by the scoring module.
+- **Node.js**
+- **FFmpeg** (for video processing)
+- **OBS Studio** with the WebSocket and Aitum Vertical plugin enabled.
+- A **Google Cloud Project** with the YouTube Data API enabled to allow the tool to manage your streams.
 
-3.  **"Gundam DX" Battle Score & Outcome Recognition:**
+### Setup
 
-    - **Screen Region Capture (FFmpeg):** Captures specific game screen regions via OBS Virtual Camera, crops relevant areas (e.g., player status for both factions), and stacks them for OCR.
-    - **Automated Game Outcome Determination:** Uses Tesseract.js to detect and determines winner (Federation/Zeon) or draw, tracks battle stats, win ratios, and streaks.
-    - **Debounced Processing:** Buffers OCR results to handle staggered detections.
-
-4.  **Unified Live Chat Aggregation:**
-
-    - **Dual Chat Fetching:** Fetches YouTube live chat messages from both faction streams.
-    - **Message Merging:** (Intended for displaying in both live streams using `comments.html`)
-    - **Duplicate Prevention:** Basic caching to avoid displaying identical messages received close together.
-
-5.  **Interactive TTS (Text-to-Speech) from Chat:**
-
-    - **Chat Commands:** Supports `!say`, `!gossip`, `!anchor` for TTS.
-    - **Multiple TTS Voices/Models:** Configured for Azure AI (Cantonese voices) and MiniMax AI.
-    - **TTS Preprocessing (Azure):** Custom text replacements for Azure TTS to improve Cantonese slang pronunciation.
-    - **Audio Queue & Rate Limiting:** Manages TTS requests sequentially with API rate limits.
-    - **Megaphone Toggle:** Global TTS enable/disable via a control interface.
-
-6.  **Touchscreen Control Interface:**
-
-    - **Stream Control:** Buttons for starting (Public/Unlisted) and stopping streams.
-    - **Real-time Console Output:** Displays server-side logs.
-    - **QR Code Display:** Shows QR codes for live stream URLs.
-    - **Megaphone Control:** UI to toggle TTS.
-
-7.  **System & Environment Specifics (Requires Adaptation for General Use):**
-
-    - **DXOP Screen:** Launches Chrome in kiosk mode for `control.html`.
-    - **Windows-Specific Utilities:** Includes OBS launch path, `taskkill`, a specific `WebCameraConfig.exe` for capture card setup, and Bluetooth speaker (`btcom`, `btdiscovery`) commands.
-
-8.  **Additional Features:**
-    - **Scheduled Stream Stop:** Automatically stops streams at a configured time.
-    - **Viewer Count Aggregation:** Sums viewer counts from both streams.
-    - **OAuth2 Token Management:** Handles YouTube API token storage and refresh.
-
-## Prerequisites
-
-- **Node.js:** v18.x or later
-- **FFmpeg:** Must be installed and accessible in the system's PATH.
-- **OBS Studio:** Installed, with the OBS WebSocket and Aitum Vertical plugin.
-- **Specific Hardware (for some features):**
-  - Capture card compatible with `WebCameraConfig.exe` (Optional, just for color tuning)
-  - Bluetooth speaker with known MAC address (In case you are using Bluetooth speaker like me)
-- **Google Cloud Project:** With YouTube Data API v3 enabled. OAuth 2.0 credentials (`client_id`, `client_secret`) are required.
-- **Pre-configured YouTube Live Streams:** Two persistent live stream setups in YouTube Studio (e.g., named "OBS Federation" and "OBS Zeon") for binding.
-
-## Setup
-
-1.  **Clone the repository:**
-
+1.  **Download the code:**
     ```bash
-    git clone <repository-url>
+    git clone https://github.com/vkedwardli/GundamDXStreamSuite.git
     cd GundamDXStreamSuite
     ```
-
 2.  **Install dependencies:**
-
     ```bash
     npm install
     ```
+3.  **Configure:**
+    - Create a `.env` file by copying from `.env.example`.
+    - Fill in your details, such as Google API credentials and your OBS WebSocket password.
+4.  **Authorize with YouTube:**
+    - Run the app for the first time: `node index.js`.
+    - Follow the on-screen link to log in with your Google account and allow access. A `token.json` file will be saved for future use.
 
-3.  **Configure Environment Variables:**
-
-    - Copy `.env.example` to `.env`.
-    - Fill in the required values in `.env`:
-      - `CLIENT_ID`: Your Google Cloud Project's OAuth 2.0 Client ID.
-      - `CLIENT_SECRET`: Your Google Cloud Project's OAuth 2.0 Client Secret.
-      - `OBS_PASSWORD`: Your OBS WebSocket server password.
-      - `MINIMAX_GROUP_ID` (Optional): Your MiniMax Group ID for TTS.
-      - `MINIMAX_API_KEY` (Optional): Your MiniMax API Key for TTS.
-      - (Add any other environment variables your current setup uses)
-
-4.  **Authorize YouTube API:**
-
-    - Run the application for the first time: `node index.js`
-    - Follow the console instructions: open the provided URL in a browser, authorize the application, and you'll be redirected to `http://localhost:3000/oauth2callback`.
-    - A `token.json` file will be created in the project root, storing your OAuth tokens.
-
-5.  **OBS Configuration:**
-
-    - Ensure OBS WebSocket server is enabled (usually under Tools -> WebSocket Server Settings).
-    - Set the server password and update it in your `.env` file.
-    - Set up an "OBS Virtual Camera" source in OBS that captures your Gundam DX game feed. The `score.js` module relies on this for OCR. The FFmpeg commands in `score.js` expect specific resolutions and crop regions from this virtual camera feed.
-
-6.  **Review Hardcoded Paths & Settings:**
-    - **`config.js`**: Check `obsDir` and `obsPath` for your OBS installation.
-    - **`score.js`**: The `ffmpegArgs` within `captureStackedImage()` contain hardcoded crop coordinates (`crop=w:h:x:y`). These **MUST** be adjusted to match your specific game resolution and the layout of information on your screen as captured by the OBS Virtual Camera.
-    - **`systemUtils.js`**:
-      - `startDXOPScreen()`: Check `chromePath`.
-      - `connectSpeaker()`: Update speaker name and MAC address if using this feature.
-      - The path to `WebCameraConfig.exe` is hardcoded.
-
-## Running the Application
+### Running the Application
 
 ```bash
 node index.js
 ```
 
-## Key Modules
+Once running, open the control panel in your browser to manage the stream.
 
-- `index.js`: Main application orchestrator.
-- `config.js`: Shared configurations, constants, and environment variable access.
-- `serverSetup.js`: HTTP server, Socket.IO, static file serving, OAuth callback.
-- `youtubeService.js`: YouTube API interactions, stream management.
-- `obsService.js`: OBS WebSocket control, stream/virtual cam management, OBS app launch/close.
-- `score.js`: Gundam DX game outcome detection via FFmpeg and Tesseract OCR.
-- `chatService.js`: YouTube live chat fetching, processing, and viewer count.
-- `ttsService.js`: Text-to-Speech processing using Azure/MiniMax.
-- `systemUtils.js`: Miscellaneous utilities (DXOP screen, Bluetooth speaker).
-- `control.html`: Web-based control panel.
-- `comments.html`: HTML page for displaying fused chat messages.
+## For Developers
 
-## Customization & Adaptation
-
-- **OCR Coordinates (`score.js`):** This is the most critical part to adapt. You **must** adjust the `ffmpegArgs` (crop dimensions and positions) in `captureStackedImage()` to match your game's screen layout and resolution.
-- **Windows-Specific Utilities:** Functions in `systemUtils.js` and parts of `obsService.js` related to launching/closing OBS and `WebCameraConfig.exe` are Windows-specific. These will need to be removed or adapted for other operating systems.
-- **Hardcoded Paths:** Review all files for hardcoded paths and adjust as needed.
-- **TTS Voices/Models:** Modify `ttsService.js` and `chatService.js` if you want to use different TTS engines or voices.
-- **YouTube Stream Details:** Customize titles, descriptions, and other settings in `youtubeService.js`.
+This project is highly customizable but contains hardcoded values specific to the original setup (e.g., screen coordinates for OCR in `score.js`, Windows paths in `systemUtils.js`). If you plan to adapt this project, you will need to modify these values to fit your environment.
 
 ## License
 
