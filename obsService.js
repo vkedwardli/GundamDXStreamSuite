@@ -125,9 +125,9 @@ export async function launchOBS() {
           );
 
           console.log(
-            "Waiting 5 seconds before attempting to connect to OBS WebSocket..."
+            "Waiting 10 seconds before attempting to connect to OBS WebSocket..."
           );
-          await scheduler.wait(5000);
+          await scheduler.wait(10000);
 
           await obsConnect((connected) => {
             if (connected) {
@@ -225,11 +225,11 @@ async function setCamState(cameraName, enabled) {
         sceneItemId: sceneItemId,
         sceneItemEnabled: enabled,
       });
-      console.log(
-        `Set '${cameraName}' in scene '${sceneName}' to ${
-          enabled ? "enabled" : "disabled"
-        }`
-      );
+      // console.log(
+      //   `Set '${cameraName}' in scene '${sceneName}' to ${
+      //     enabled ? "enabled" : "disabled"
+      //   }`
+      // );
     }
 
     // After successfully changing the state, broadcast the update to all clients.
@@ -264,6 +264,7 @@ export async function toggleCam(cameraName) {
 
     const newState = !sceneItemEnabled;
     await setCamState(cameraName, newState);
+    console.log(`toggleCam: ${cameraName}`);
     return newState;
   } catch (error) {
     console.error(`Error toggling camera ${cameraName}:`, error);
