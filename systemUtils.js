@@ -4,7 +4,7 @@ import os from "os";
 import { exec, spawn } from "child_process";
 import { promisify } from "util";
 import { scheduler } from "node:timers/promises";
-import { isDev, Faction } from "./config.js"; // Assuming Faction might be needed by lofiTest or similar
+import { isDev } from "./config.js";
 import {
   setupLiveChatForFaction,
   startLiveChatAndViewerCount,

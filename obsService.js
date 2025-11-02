@@ -7,7 +7,7 @@ import { obsDir, obsPath, OBS_PASSWORD } from "./config.js";
 import {
   startRecognizeBattleResults,
   stopRecognizeBattleResults,
-} from "./score.js"; // Assuming score.js is in the same directory
+} from "./score.js";
 import { io } from "./serverSetup.js";
 
 export const obs = new OBSWebSocket();
