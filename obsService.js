@@ -309,11 +309,12 @@ export async function getCamStatus(cameraName) {
 }
 
 export async function getAllCamsStatus() {
+  const statuses = {};
+
   if (!obs.identified) {
-    await obsConnect();
+    return statuses;
   }
 
-  const statuses = {};
   for (const cameraName in cameraMapping) {
     statuses[cameraName] = await getCamStatus(cameraName);
   }
