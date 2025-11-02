@@ -158,6 +158,7 @@ const gameState = {
   totalDraws: 0,
   lastWinner: null, // Faction object
   lastOutcomeTime: 0, // Timestamp of the last processed win/draw
+  lastBattleAnnouncement: 0,
 };
 
 // --- Battle Detection Buffering ---
@@ -220,7 +221,7 @@ Wins:          Federation: ${fedWins} | Zeon: ${zeonWins}
 Draws:         ${totalDraws}
 Win Ratio:     ${ratioString}
 ----------------------------------------------------`;
-  console.log(summary);
+  // console.log(summary);
 };
 
 // Centralized function to reset win streaks for any reason
@@ -234,6 +235,37 @@ const resetStreaks = (reason) => {
   gameState.lastWinner = null;
   broadcastGameState(); // Broadcast the updated state
   // Note: Total stats are NOT reset here, only streaks.
+};
+
+const announceTuesdaySpecial = () => {
+  const now = new Date();
+  const isTuesday = now.getDay() === 2; // 0 is Sunday, 2 is Tuesday
+
+  if (
+    isTuesday &&
+    gameState.totalBattles > 0 &&
+    (gameState.totalBattles - 1) % 10 === 0 &&
+    gameState.totalBattles !== gameState.lastBattleAnnouncement
+  ) {
+    gameState.lastBattleAnnouncement = gameState.totalBattles;
+    const text = `荔枝角超級聯賽提提你：今晚無限制，推槍笠頭鳩搲乜都得！`;
+
+    textToSpeech({
+      text,
+      model: TTSModel.AZURE_AI,
+      voiceID: "zh-HK-HiuMaanNeural",
+    });
+
+    const msg = {
+      isFederation: true, // Default to Federation for display purposes
+      time: getFormattedTime(),
+      authorName: "規矩L",
+      profilePic: "images/star.png",
+      message: text,
+      plainMessage: text,
+    };
+    io.emit("message", msg);
+  }
 };
 
 // Main function to determine and process the battle's outcome
@@ -350,6 +382,9 @@ const processBattleOutcome = () => {
 
   // --- 5. Broadcast the new game state ---
   broadcastGameState();
+
+  // --- 6. Check for Tuesday special announcement ---
+  announceTuesdaySpecial();
 };
 
 async function startRecognizeBattleResults() {
@@ -458,4 +493,5 @@ export {
   broadcastGameState,
   broadcastDummyGameState,
   markCameraAsDisabled,
+  gameState,
 };

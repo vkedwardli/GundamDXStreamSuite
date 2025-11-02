@@ -36,6 +36,7 @@ import {
   broadcastDummyGameState,
   markCameraAsDisabled,
 } from "./score.js";
+import { startTimeAnnouncer } from "./timeAnnouncer.js";
 // --- Global State (moved from various places, consider if these need to be in a dedicated state module later) ---
 let megaphoneState = Megaphone.ENABLED;
 let blockStartStreamingUntil = 0;
@@ -322,6 +323,7 @@ async function main() {
   await authorizeYouTube();
   await startDXOPScreen();
   await connectSpeaker("HK Onyx Studio", "0C:A6:94:08:F6:A1");
+  startTimeAnnouncer();
 
   // Example: For testing lofi mode directly on start (usually triggered by client)
   // lofiTest(io);
