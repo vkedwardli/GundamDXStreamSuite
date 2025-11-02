@@ -459,6 +459,12 @@
       cancelBtn.addEventListener("click", () => {
         hideConfirmDialog();
       });
+
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && socket.disconnected) {
+          socket.connect();
+        }
+      });
     </script>
   </body>
 </html>

@@ -103,6 +103,12 @@
       socket.on("camStatusUpdate", ({ cameraName, isEnabled }) => {
         updateButtonStatus(cameraName, isEnabled);
       });
+
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && socket.disconnected) {
+          socket.connect();
+        }
+      });
     </script>
   </body>
 </html>
