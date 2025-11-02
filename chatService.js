@@ -1,4 +1,5 @@
 import { LiveChat } from "youtube-chat";
+import { scheduler } from "node:timers/promises";
 import { Faction, Megaphone, TTSModel } from "./config.js";
 import { textToSpeech } from "./ttsService.js";
 import { getViewerCount } from "./youtubeService.js"; // For viewer count updates
@@ -97,36 +98,40 @@ function processChatMessage(chatItem, faction, io) {
 }
 
 export function setupLiveChatForFaction({ broadcastId, faction, io }) {
-  const liveChat = new LiveChat({ liveId: broadcastId });
+  return new Promise((resolve, reject) => {
+    const liveChat = new LiveChat({ liveId: broadcastId });
 
-  if (faction === Faction.FEDERATION) {
-    if (fedLiveChat) fedLiveChat.stop();
-    fedLiveChat = liveChat;
-  } else {
-    if (zeonLiveChat) zeonLiveChat.stop();
-    zeonLiveChat = liveChat;
-  }
+    if (faction === Faction.FEDERATION) {
+      if (fedLiveChat) fedLiveChat.stop();
+      fedLiveChat = liveChat;
+    } else {
+      if (zeonLiveChat) zeonLiveChat.stop();
+      zeonLiveChat = liveChat;
+    }
 
-  liveChat.on("start", (liveId) => {
-    console.log(`Live chat started for ${faction.value}: ${liveId}`);
+    liveChat.on("start", (liveId) => {
+      console.log(`Live chat started for ${faction.value}: ${liveId}`);
+      resolve(liveChat); // Resolve the promise on successful start
+    });
+
+    liveChat.on("end", (reason) => {
+      console.log(`Live chat ended for ${faction.value}: ${reason}`);
+    });
+
+    liveChat.on("chat", (chatItem) => {
+      processChatMessage(chatItem, faction, io);
+    });
+
+    liveChat.on("error", (err) => {
+      console.error(`Live chat error for ${faction.value}:`, err);
+      reject(err); // Reject the promise on error
+    });
+
+    liveChat.start().catch((err) => {
+      console.error(`Failed to start live chat for ${faction.value}: ${err}`);
+      reject(err); // Also reject if the start call itself fails
+    });
   });
-
-  liveChat.on("end", (reason) => {
-    console.log(`Live chat ended for ${faction.value}: ${reason}`);
-  });
-
-  liveChat.on("chat", (chatItem) => {
-    processChatMessage(chatItem, faction, io);
-  });
-
-  liveChat.on("error", (err) => {
-    console.error(`Live chat error for ${faction.value}:`, err);
-  });
-
-  liveChat.start().catch((err) => {
-    console.error(`Failed to start live chat for ${faction.value}: ${err}`);
-  });
-  return liveChat;
 }
 
 async function fetchAndSumViewers({ broadcastIds, io }) {
@@ -142,32 +147,58 @@ async function fetchAndSumViewers({ broadcastIds, io }) {
   }
 }
 
-export function startLiveChatAndViewerCount({ broadcastIds, io }) {
+export async function startLiveChatAndViewerCount({ broadcastIds, io }) {
   if (broadcastIds.length !== 2) {
     console.error(
       "Cannot start live chat and viewer count: Expected 2 broadcast IDs."
     );
     return;
   }
-  console.log("Setting up live chat for Federation and Zeon...");
-  setupLiveChatForFaction({
-    broadcastId: broadcastIds[0],
-    faction: Faction.FEDERATION,
-    io,
-  });
-  setupLiveChatForFaction({
-    broadcastId: broadcastIds[1],
-    faction: Faction.ZEON,
-    io,
-  });
 
-  console.log("Setting up live viewer count...");
-  fetchAndSumViewers({ broadcastIds, io }); // Initial fetch
-  if (viewerCountInterval) clearInterval(viewerCountInterval);
-  viewerCountInterval = setInterval(
-    () => fetchAndSumViewers({ broadcastIds, io }),
-    25 * 1000 // every 25 seconds
-  );
+  let attempts = 0;
+  const maxAttempts = 3;
+
+  while (attempts < maxAttempts) {
+    try {
+      console.log(
+        `Attempt ${attempts + 1} to set up live chat for Federation and Zeon...`
+      );
+
+      const fedPromise = setupLiveChatForFaction({
+        broadcastId: broadcastIds[0],
+        faction: Faction.FEDERATION,
+        io,
+      });
+
+      const zeonPromise = setupLiveChatForFaction({
+        broadcastId: broadcastIds[1],
+        faction: Faction.ZEON,
+        io,
+      });
+
+      await Promise.all([fedPromise, zeonPromise]);
+
+      console.log("Setting up live viewer count...");
+      fetchAndSumViewers({ broadcastIds, io }); // Initial fetch
+      if (viewerCountInterval) clearInterval(viewerCountInterval);
+      viewerCountInterval = setInterval(
+        () => fetchAndSumViewers({ broadcastIds, io }),
+        25 * 1000 // every 25 seconds
+      );
+
+      console.log("Successfully started live chat and viewer count.");
+      return; // Exit the loop and function on success
+    } catch (error) {
+      console.error(`Attempt ${attempts + 1} failed:`, error.message || error);
+      attempts++;
+      if (attempts < maxAttempts) {
+        console.log(`Retrying in 30 seconds...`);
+        await scheduler.wait(30000);
+      } else {
+        console.error("All attempts to start live chat failed.");
+      }
+    }
+  }
 }
 
 export function stopLiveChatAndViewerCount() {
