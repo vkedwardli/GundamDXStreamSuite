@@ -218,6 +218,37 @@
         border-radius: 20px;
         font-size: 40px;
       }
+      .hidden {
+        display: none;
+      }
+      .expanded {
+        flex-grow: 2.1; /* Takes up space of two buttons and margin */
+      }
+      .button-icon {
+        height: 240px;
+        margin-right: 30px;
+        margin-right: 30px;
+        margin-top: -40px;
+        margin-bottom: -40px;
+        margin-left: -80px;
+      }
+      .flex-button {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      @keyframes shine-ghost {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.3;
+        }
+      }
+      .flex-button .button-icon {
+        animation: shine-ghost 2s infinite;
+      }
     </style>
   </head>
   <body>
@@ -268,12 +299,38 @@
       const cancelBtn = document.getElementById("cancelBtn");
       const megaphoneBtn = document.getElementById("megaphone");
       let pendingAction = null;
+      let activeStreamType = null; // 'public' or 'unlisted'
 
-      // Update button states based on streaming status
-      function updateButtonStates({ isStreaming }) {
-        startPublicBtn.disabled = isStreaming;
-        startUnlistedBtn.disabled = isStreaming;
-        stopStreamingBtn.disabled = !isStreaming;
+      const originalUnlistedBtnHTML = startUnlistedBtn.innerHTML;
+
+      function updateButtonStates({ isStreaming, streamType }) {
+        if (isStreaming) {
+          stopStreamingBtn.disabled = false;
+          if (streamType === "public") {
+            startPublicBtn.disabled = true;
+            startUnlistedBtn.classList.add("hidden");
+            startPublicBtn.classList.add("expanded");
+          } else if (streamType === "unlisted") {
+            startUnlistedBtn.disabled = true;
+            startPublicBtn.classList.add("hidden");
+            startUnlistedBtn.classList.add("expanded", "flex-button");
+            startUnlistedBtn.innerHTML =
+              `<img src="./images/ghost.png" class="button-icon">` +
+              `<span>${originalUnlistedBtnHTML}</span>`;
+          }
+        } else {
+          stopStreamingBtn.disabled = true;
+          startPublicBtn.disabled = false;
+          startUnlistedBtn.disabled = false;
+
+          startPublicBtn.classList.remove("hidden", "expanded");
+          startUnlistedBtn.classList.remove(
+            "hidden",
+            "expanded",
+            "flex-button"
+          );
+          startUnlistedBtn.innerHTML = originalUnlistedBtnHTML;
+        }
       }
 
       // Show confirmation dialog
@@ -295,20 +352,23 @@
       // Button functions
       function startPublic() {
         showConfirmDialog("確定要開台 (Public)？", () => {
+          activeStreamType = "public";
           socket.emit("startPublic");
-          updateButtonStates({ isStreaming: true });
+          updateButtonStates({ isStreaming: true, streamType: "public" });
         });
       }
 
       function startUnlisted() {
         showConfirmDialog("開興趣班 (Unlisted)？ ", () => {
+          activeStreamType = "unlisted";
           socket.emit("startUnlisted");
-          updateButtonStates({ isStreaming: true });
+          updateButtonStates({ isStreaming: true, streamType: "unlisted" });
         });
       }
 
       function stopStreaming() {
         showConfirmDialog("收皮？", () => {
+          activeStreamType = null;
           socket.emit("stopStreaming");
           updateButtonStates({ isStreaming: false });
         });
@@ -350,11 +410,23 @@
         consoleOutput.scrollTop = consoleOutput.scrollHeight;
       });
 
-      socket.on("isStreaming", (isStreaming) => {
-        updateButtonStates({ isStreaming });
-        if (isStreaming == false) {
-          qrCode1.innerHTML = "Federation QR";
-          qrCode2.innerHTML = "Zeon QR";
+      socket.on("isStreaming", (data) => {
+        // It's safer to check if data is an object before destructuring
+        if (data && typeof data === "object") {
+          const { isStreaming, streamType } = data;
+          activeStreamType = streamType;
+          updateButtonStates({ isStreaming, streamType });
+          if (isStreaming == false) {
+            qrCode1.innerHTML = "Federation QR";
+            qrCode2.innerHTML = "Zeon QR";
+          }
+        } else {
+          // Handle the case where data is not an object (e.g., just a boolean)
+          updateButtonStates({ isStreaming: data, streamType: null });
+          if (data == false) {
+            qrCode1.innerHTML = "Federation QR";
+            qrCode2.innerHTML = "Zeon QR";
+          }
         }
       });
 

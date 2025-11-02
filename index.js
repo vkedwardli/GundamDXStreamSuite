@@ -40,6 +40,7 @@ import {
 let megaphoneState = Megaphone.ENABLED;
 let blockStartStreamingUntil = 0;
 let currentBroadcastIds = []; // To store IDs of current streams
+let currentStreamType = null; // 'public' or 'unlisted'
 
 // --- Socket.IO Client Connection Handler ---
 // This function will be passed to setupServer
@@ -47,7 +48,10 @@ function handleClientConnection(client, io) {
   // Emit initial status to newly connected client
   IsLiveStreaming()
     .then((isStreaming) => {
-      client.emit("isStreaming", isStreaming);
+      client.emit("isStreaming", {
+        isStreaming,
+        streamType: currentStreamType,
+      });
       client.emit("megaphoneStatus", megaphoneState);
       if (isStreaming && currentBroadcastIds.length === 2) {
         client.emit("streamUrls", {
@@ -61,24 +65,23 @@ function handleClientConnection(client, io) {
   client.on("startPublic", async () => {
     console.log("Socket.IO: Received startPublic request");
     await startStreaming({ isPublic: true, io }); // Pass io
-    io.emit("isStreaming", await IsLiveStreaming());
   });
 
   client.on("startUnlisted", async () => {
     console.log("Socket.IO: Received startUnlisted request");
     await startStreaming({ isPublic: false, io }); // Pass io
-    io.emit("isStreaming", await IsLiveStreaming());
   });
 
   client.on("stopStreaming", async () => {
     console.log("Socket.IO: Received stopStreaming request");
     await stopStreaming(io); // Pass io
-    io.emit("status", "Streaming stopped");
-    io.emit("isStreaming", await IsLiveStreaming());
   });
 
   client.on("getStreamingStatus", async () => {
-    io.emit("isStreaming", await IsLiveStreaming());
+    io.emit("isStreaming", {
+      isStreaming: await IsLiveStreaming(),
+      streamType: currentStreamType,
+    });
   });
 
   client.on("toggleMegaphone", async () => {
@@ -145,9 +148,10 @@ function handleClientConnection(client, io) {
 // --- Main Streaming Logic ---
 async function startStreaming({ isPublic, retryCount = 0, io }) {
   const MAX_RETRIES = 3;
+  currentStreamType = isPublic ? "public" : "unlisted";
 
   if (Date.now() < blockStartStreamingUntil) {
-    io.emit("isStreaming", false);
+    io.emit("isStreaming", { isStreaming: false, streamType: null });
     console.error(
       `Start request ignored: Please wait for ${Math.ceil(
         (blockStartStreamingUntil - Date.now()) / 1000
@@ -166,7 +170,7 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
   const obsLaunched = await launchOBS(); // Ensures OBS is running and connected
   if (!obsLaunched) {
     console.error("OBS failed to launch or connect. Aborting startStreaming.");
-    io.emit("isStreaming", false); // Ensure client UI reflects this
+    io.emit("isStreaming", { isStreaming: false, streamType: null }); // Ensure client UI reflects this
     return;
   }
 
@@ -238,7 +242,7 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
       return startStreaming({ isPublic, retryCount: retryCount + 1, io });
     } else {
       console.error("Max retries reached. Failed to set up live streams.");
-      io.emit("isStreaming", false);
+      io.emit("isStreaming", { isStreaming: false, streamType: null });
       return;
     }
   }
@@ -266,7 +270,7 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
     url1: `https://youtu.be/${broadcastIds[0]}`,
     url2: `https://youtu.be/${broadcastIds[1]}`,
   });
-  io.emit("isStreaming", true);
+  io.emit("isStreaming", { isStreaming: true, streamType: currentStreamType });
 
   await scheduler.wait(15000); // Wait for streams to be fully live before starting chat
   startLiveChatAndViewerCount({ broadcastIds, io });
@@ -277,6 +281,7 @@ async function stopStreaming(io) {
   try {
     blockStartStreamingUntil = Date.now() + 60 * 1000; // Block for 60 seconds
     megaphoneState = Megaphone.ENABLED; // Reset megaphone state
+    currentStreamType = null; // Reset stream type
     updateMegaphoneState(megaphoneState);
     if (io) io.emit("megaphoneStatus", megaphoneState);
 
@@ -286,6 +291,7 @@ async function stopStreaming(io) {
     currentBroadcastIds = []; // Clear current broadcast IDs
     if (io) {
       io.emit("totalviewers", 0); // Reset viewers
+      io.emit("isStreaming", { isStreaming: false, streamType: null });
     }
 
     closeOBS();
