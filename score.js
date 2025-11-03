@@ -248,7 +248,7 @@ const announceTuesdaySpecial = () => {
     gameState.totalBattles !== gameState.lastBattleAnnouncement
   ) {
     gameState.lastBattleAnnouncement = gameState.totalBattles;
-    const text = `荔枝角超級聯賽提提你：今晚無限制，推槍笠頭鳩搲乜都得！`;
+    const text = `荔枝角超級星期二提提你：今晚無限制，推槍笠頭鳩搲乜都得！`;
 
     textToSpeech({
       text,
