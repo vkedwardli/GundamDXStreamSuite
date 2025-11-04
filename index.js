@@ -280,6 +280,44 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
 async function stopStreaming(io) {
   // io might be needed for emitting status during stop
   try {
+    const now = new Date();
+    const hour = now.getHours();
+    // Check if the time is between 10 PM (22) and 3 AM (exclusive of 3, so 22, 23, 0, 1, 2)
+    const isLateNight = hour >= 22 || hour < 3;
+
+    if (isLateNight) {
+      const farewellMessage = "歡樂今宵再會，各位觀眾……晚安";
+      console.log(
+        "Late night stop detected. Playing and sending announcement."
+      );
+
+      // Send message to local chat display
+      const msg = {
+        isFederation: true, // Or some other default for styling
+        time: new Date().toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "numeric",
+          hour12: true,
+          timeZone: "Asia/Hong_Kong",
+        }),
+        authorName: "系統訊息",
+        profilePic: "images/star.png", // A generic system icon
+        message: farewellMessage,
+        plainMessage: farewellMessage,
+      };
+      if (io) io.emit("message", msg);
+
+      // Play the announcement via TTS
+      await textToSpeech({
+        text: farewellMessage,
+        model: TTSModel.AZURE_AI,
+        voiceID: "zh-HK-HiuMaanNeural",
+      });
+
+      // Adding a small delay to ensure the sound finishes playing before OBS is killed.
+      await scheduler.wait(2000);
+    }
+
     blockStartStreamingUntil = Date.now() + 60 * 1000; // Block for 60 seconds
     megaphoneState = Megaphone.ENABLED; // Reset megaphone state
     currentStreamType = null; // Reset stream type
