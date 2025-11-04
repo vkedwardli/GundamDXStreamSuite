@@ -31,6 +31,7 @@ import {
 } from "./chatService.js";
 import { setupServer, io as socketIoInstance } from "./serverSetup.js"; // Import io
 import { startDXOPScreen, connectSpeaker, lofiTest } from "./systemUtils.js";
+import { createMessage } from "./messageService.js";
 import {
   broadcastGameState,
   broadcastDummyGameState,
@@ -96,21 +97,12 @@ function handleClientConnection(client, io) {
     updateMegaphoneState(megaphoneState); // Update state in chatService
     io.emit("megaphoneStatus", megaphoneState);
     if (megaphoneState === Megaphone.MUTED) {
-      const msg = {
-        isFederation: true, // Or some other default
-        time: new Date().toLocaleTimeString("en-US", {
-          hour: "numeric",
-          minute: "numeric",
-          hour12: true,
-          timeZone: "Asia/Hong_Kong",
-        }),
+      const msg = createMessage({
         authorName: "現場發動滅聲",
-        profilePic: "images/mute.png", // Ensure this file is served
+        profilePic: "images/mute.png",
         message:
           "我真係唔得喇，你唔好再... 💥 你老闆話你真係，我已經話咗唔得嫁啦，你仲要喔噢喔噢咁，完全唔理我幾咁難受嘅你！😡",
-        plainMessage:
-          "我真係唔得喇，你唔好再... 💥 你老闆話你真係，我已經話咗唔得嫁啦，你仲要喔噢喔噢咁，完全唔理我幾咁難受嘅你！😡",
-      };
+      });
       io.emit("message", msg);
     }
   });
@@ -292,19 +284,11 @@ async function stopStreaming(io) {
       );
 
       // Send message to local chat display
-      const msg = {
-        isFederation: true, // Or some other default for styling
-        time: new Date().toLocaleTimeString("en-US", {
-          hour: "numeric",
-          minute: "numeric",
-          hour12: true,
-          timeZone: "Asia/Hong_Kong",
-        }),
-        authorName: "系統訊息",
-        profilePic: "images/star.png", // A generic system icon
+      const msg = createMessage({
+        authorName: "收皮",
+        profilePic: "images/star.png",
         message: farewellMessage,
-        plainMessage: farewellMessage,
-      };
+      });
       if (io) io.emit("message", msg);
 
       // Play the announcement via TTS

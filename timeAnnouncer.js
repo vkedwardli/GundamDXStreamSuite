@@ -4,6 +4,7 @@ import { TTSModel, Faction } from "./config.js";
 import { gameState } from "./score.js";
 import { IsLiveStreaming } from "./obsService.js";
 import { io } from "./serverSetup.js";
+import { createMessage } from "./messageService.js";
 
 const sponsors = ["飛藝洋服", "Element of Stage"];
 
@@ -61,22 +62,11 @@ async function announceTime() {
     voiceID: "zh-HK-HiuMaanNeural",
   });
 
-  const getFormattedTime = () =>
-    new Date().toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "numeric",
-      hour12: true,
-      timeZone: "Asia/Hong_Kong",
-    });
-
-  const msg = {
-    isFederation: true, // Default to Federation for display purposes
-    time: getFormattedTime(),
+  const msg = createMessage({
     authorName: "報時系統",
     profilePic: "images/star.png",
     message: text,
-    plainMessage: text,
-  };
+  });
   io.emit("message", msg);
 }
 

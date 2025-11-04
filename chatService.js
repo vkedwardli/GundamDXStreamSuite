@@ -3,6 +3,7 @@ import { scheduler } from "node:timers/promises";
 import { Faction, Megaphone, TTSModel } from "./config.js";
 import { textToSpeech } from "./ttsService.js";
 import { getViewerCount } from "./youtubeService.js"; // For viewer count updates
+import { createMessage } from "./messageService.js";
 
 let fedLiveChat = null;
 let zeonLiveChat = null;
@@ -17,19 +18,8 @@ export function updateMegaphoneState(newState) {
 }
 
 function processChatMessage(chatItem, faction, io) {
-  const date = new Date(chatItem.timestamp);
-  const options = {
-    hour: "numeric",
-    minute: "numeric",
-    hour12: true,
-    timeZone: "Asia/Hong_Kong",
-  };
-  const formatter = new Intl.DateTimeFormat("en-US", options);
-  const formattedTime = formatter.format(date);
-
-  const msg = {
+  const msg = createMessage({
     isFederation: faction === Faction.FEDERATION,
-    time: formattedTime,
     authorName: chatItem.author.name,
     profilePic: chatItem.author.thumbnail.url,
     message: chatItem.message
@@ -42,7 +32,8 @@ function processChatMessage(chatItem, faction, io) {
     plainMessage: chatItem.message
       .map((item) => (item.text ? item.text : ` :${item.alt}: `))
       .join(""),
-  };
+    timestamp: new Date(chatItem.timestamp),
+  });
   io.emit("chatlog", `${msg.authorName}: ${msg.plainMessage}`);
 
   const currentTime = Date.now();

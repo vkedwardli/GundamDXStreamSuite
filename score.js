@@ -8,6 +8,7 @@ import { scheduler } from "timers/promises";
 import { textToSpeech } from "./ttsService.js";
 import { TTSModel, Faction } from "./config.js";
 import { enableCam } from "./obsService.js";
+import { createMessage } from "./messageService.js";
 
 const recentlyDisabledCams = new Map();
 const MANUAL_DISABLE_LOCKOUT_MS = 10000; // 10 seconds
@@ -177,15 +178,6 @@ const streakMessages = {
 };
 const superStreakMessage = "數唔到喇，打L死人咩";
 
-// Helper for consistent time formatting
-const getFormattedTime = () =>
-  new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "numeric",
-    hour12: true,
-    timeZone: "Asia/Hong_Kong", // Or your target timezone
-  });
-
 // Broadcasts the current game state to the client via a prefixed console log
 const broadcastGameState = () => {
   io.emit("battleResult", { state: gameState });
@@ -256,14 +248,11 @@ const announceTuesdaySpecial = () => {
       voiceID: "zh-HK-HiuMaanNeural",
     });
 
-    const msg = {
-      isFederation: true, // Default to Federation for display purposes
-      time: getFormattedTime(),
+    const msg = createMessage({
       authorName: "規矩L",
       profilePic: "images/star.png",
       message: text,
-      plainMessage: text,
-    };
+    });
     io.emit("message", msg);
   }
 };
@@ -366,14 +355,12 @@ const processBattleOutcome = () => {
     });
 
     // Emit chat message
-    const msg = {
+    const msg = createMessage({
       isFederation: winner === Faction.FEDERATION,
-      time: getFormattedTime(),
       authorName: `${winner.displayName}連勝！`,
-      profilePic: "images/star.png", // Using star icon for the message
+      profilePic: "images/star.png",
       message: streakMessage,
-      plainMessage: streakMessage,
-    };
+    });
     io.emit("message", msg);
   }
 
