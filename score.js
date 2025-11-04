@@ -8,7 +8,7 @@ import { scheduler } from "timers/promises";
 import { textToSpeech } from "./ttsService.js";
 import { TTSModel, Faction } from "./config.js";
 import { enableCam } from "./obsService.js";
-import { createMessage } from "./messageService.js";
+import { createMessage, getFormattedTime } from "./messageService.js";
 
 const recentlyDisabledCams = new Map();
 const MANUAL_DISABLE_LOCKOUT_MS = 10000; // 10 seconds

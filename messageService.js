@@ -1,4 +1,4 @@
-function getFormattedTime(date = new Date()) {
+export function getFormattedTime(date = new Date()) {
   const options = {
     hour: "numeric",
     minute: "numeric",
