@@ -1,6 +1,7 @@
 import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import fs from "fs/promises";
+import { scheduler } from "node:timers/promises";
 import {
   CLIENT_ID,
   CLIENT_SECRET,
@@ -162,27 +163,32 @@ export async function updateVideoDetails({
   faction,
   opponentBroadcastId,
 }) {
-  try {
-    const currentDate = new Date()
-      .toLocaleDateString("en-CA", {
-        timeZone: "Asia/Hong_Kong",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      })
-      .replace(/-/g, "/");
+  let attempts = 0;
+  const maxAttempts = 3;
+  let lastError = null;
 
-    await youtube.videos.update({
-      part: "snippet,status",
-      resource: {
-        id: broadcastId,
-        snippet: {
-          title: `荔枝角 Gundam DX【${faction.displayName}側】${currentDate} Mobile Suit Gundam: Federation vs. Zeon DX 機動戦士ガンダム 連邦vs.ジオンDX 高達DX`,
-          description: `👁️‍🗨️ 切換視點到${
-            faction === Faction.FEDERATION
-              ? Faction.ZEON.displayName
-              : Faction.FEDERATION.displayName
-          }側: https://youtu.be/${opponentBroadcastId}
+  while (attempts < maxAttempts) {
+    try {
+      const currentDate = new Date()
+        .toLocaleDateString("en-CA", {
+          timeZone: "Asia/Hong_Kong",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        })
+        .replace(/-/g, "/");
+
+      await youtube.videos.update({
+        part: "snippet,status",
+        resource: {
+          id: broadcastId,
+          snippet: {
+            title: `荔枝角 Gundam DX【${faction.displayName}側】${currentDate} Mobile Suit Gundam: Federation vs. Zeon DX 機動戦士ガンダム 連邦vs.ジオンDX 高達DX`,
+            description: `👁️‍🗨️ 切換視點到${
+              faction === Faction.FEDERATION
+                ? Faction.ZEON.displayName
+                : Faction.FEDERATION.displayName
+            }側: https://youtu.be/${opponentBroadcastId}
 
 🔊 留言大聲公：
 使用 *!say [message]* 格式，系統就會自動讀出你嘅留言！
@@ -199,39 +205,54 @@ export async function updateVideoDetails({
 🔗 Source code：https://github.com/vkedwardli/GundamDXStreamSuite
 
 #Gundam #GundamDX #連ジ #arcade #GundamVS`,
-          categoryId: "20",
-          tags: [
-            "Mobile Suit Gundam: Federation vs. Zeon DX",
-            "機動戦士ガンダム 連邦vs.ジオンDX",
-            "連ジ",
-            "Gundam",
-            "Gundam DX",
-            "Mobile Suit Gundam",
-            "高達",
-            "高達DX",
-            "連邦vs.ジオン",
-            "Sega NAOMI",
-            "Gaming",
-            "Gundam VS",
-            "Arcade Games",
-          ],
-          defaultLanguage: "yue-HK",
-          defaultAudioLanguage: "yue-HK",
+            categoryId: "20",
+            tags: [
+              "Mobile Suit Gundam: Federation vs. Zeon DX",
+              "機動戦士ガンダム 連邦vs.ジオンDX",
+              "連ジ",
+              "Gundam",
+              "Gundam DX",
+              "Mobile Suit Gundam",
+              "高達",
+              "高達DX",
+              "連邦vs.ジオン",
+              "Sega NAOMI",
+              "Gaming",
+              "Gundam VS",
+              "Arcade Games",
+            ],
+            defaultLanguage: "yue-HK",
+            defaultAudioLanguage: "yue-HK",
+          },
+          status: {
+            containsSyntheticMedia: false,
+          },
         },
-        status: {
-          containsSyntheticMedia: false,
-        },
-      },
-    });
-    console.log(
-      `Updated video details for ${faction.value} broadcast: https://youtu.be/${broadcastId}`
-    );
-  } catch (error) {
-    console.error(
-      `Error updating ${faction.value} video details for ${broadcastId}:`,
-      error
-    );
+      });
+      console.log(
+        `Updated video details for ${faction.value} broadcast: https://youtu.be/${broadcastId}`
+      );
+      return; // Success, exit the function
+    } catch (error) {
+      lastError = error;
+      console.error(
+        `Attempt ${attempts + 1} failed for updating ${
+          faction.value
+        } video details for ${broadcastId}:`,
+        error
+      );
+      attempts++;
+      if (attempts < maxAttempts) {
+        console.log(`Retrying in 30 seconds...`);
+        await scheduler.wait(30000);
+      }
+    }
   }
+  // If all attempts fail, throw the last recorded error
+  console.error(
+    `All attempts failed for updating ${faction.value} video details for ${broadcastId}.`
+  );
+  throw lastError;
 }
 
 export async function deleteLiveBroadcasts(broadcastIds) {
