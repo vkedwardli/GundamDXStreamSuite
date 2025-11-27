@@ -38,6 +38,7 @@ import {
   markCameraAsDisabled,
 } from "./score.js";
 import { startTimeAnnouncer } from "./timeAnnouncer.js";
+import { sendTextToDXGroup } from "./whatsapp.js";
 // --- Global State (moved from various places, consider if these need to be in a dedicated state module later) ---
 let megaphoneState = Megaphone.ENABLED;
 let blockStartStreamingUntil = 0;
@@ -212,6 +213,19 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
           "Successfully created and updated new streams:",
           broadcastIds
         );
+        if (isPublic) {
+          try {
+            for (const id of broadcastIds) {
+              await sendTextToDXGroup(`https://youtu.be/${id}`, {
+                withTyping: true,
+                typingDurationMs: 1800,
+                pauseAfterMs: 1200,
+              });
+            }
+          } catch (err) {
+            console.error("Failed to send WhatsApp notification:", err);
+          }
+        }
       } catch (error) {
         console.error("Error during stream creation/update:", error);
         if (broadcastIds.length > 0) await deleteLiveBroadcasts(broadcastIds); // Clean up partially created

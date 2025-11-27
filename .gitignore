@@ -1,3 +1,7 @@
+# WhatsApp
+.wwebjs_auth
+.wwebjs_cache
+
 # Google API token
 token.json
 
