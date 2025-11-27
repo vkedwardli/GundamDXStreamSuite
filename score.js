@@ -231,10 +231,16 @@ const resetStreaks = (reason) => {
 
 const announceTuesdaySpecial = () => {
   const now = new Date();
-  const isTuesday = now.getDay() === 2; // 0 is Sunday, 2 is Tuesday
+  const day = now.getDay(); // 0 = Sun, 1 = Mon, 2 = Tue, 3 = Wed
+  const hour = now.getHours();
+
+  // "Business Tuesday": Tuesday 08:00 -> Wednesday 01:59 (station open until 2am)
+  const isBusinessTuesday =
+    (day === 2 && hour >= 8) || // Tuesday after 8am
+    (day === 3 && hour < 2); // Early Wednesday still counts as Tuesday night
 
   if (
-    isTuesday &&
+    isBusinessTuesday &&
     gameState.totalBattles > 0 &&
     (gameState.totalBattles - 1) % 10 === 0 &&
     gameState.totalBattles !== gameState.lastBattleAnnouncement
