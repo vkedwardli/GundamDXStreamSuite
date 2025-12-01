@@ -4,6 +4,7 @@ import { Faction, Megaphone, TTSModel } from "./config.js";
 import { textToSpeech } from "./ttsService.js";
 import { getViewerCount } from "./youtubeService.js"; // For viewer count updates
 import { createMessage } from "./messageService.js";
+import { sendTextToDXGroup } from "./whatsapp.js";
 
 let fedLiveChat = null;
 let zeonLiveChat = null;
@@ -61,6 +62,7 @@ function processChatMessage(chatItem, faction, io) {
   ) {
     ttsText = msg.plainMessage.slice(5);
     msg.message = `${currentMegaphoneState.icon} ` + msg.message.slice(5);
+    msg.plainMessage = `${currentMegaphoneState.icon} ` + ttsText;
     ttsVoiceID = "zh-HK-WanLungNeural"; // Male
   } else if (
     msg.plainMessage.startsWith("!gossip ") ||
@@ -68,6 +70,7 @@ function processChatMessage(chatItem, faction, io) {
   ) {
     ttsText = msg.plainMessage.slice(8);
     msg.message = `${currentMegaphoneState.gossip} ` + msg.message.slice(8);
+    msg.plainMessage = `${currentMegaphoneState.gossip} ` + ttsText;
     ttsVoiceID = "zh-HK-HiuMaanNeural"; // Casual Female
   } else if (
     msg.plainMessage.startsWith("!anchor ") ||
@@ -75,6 +78,7 @@ function processChatMessage(chatItem, faction, io) {
   ) {
     ttsText = msg.plainMessage.slice(8);
     msg.message = `${currentMegaphoneState.anchor} ` + msg.message.slice(8);
+    msg.plainMessage = `${currentMegaphoneState.anchor} ` + ttsText;
     ttsVoiceID = "zh-HK-HiuGaaiNeural"; // News Reporter Female
   }
 
@@ -86,6 +90,9 @@ function processChatMessage(chatItem, faction, io) {
     });
   }
   io.emit("message", msg);
+
+  const prefix = faction === Faction.FEDERATION ? "🔵" : "🔴";
+  sendTextToDXGroup(`${prefix} ${msg.authorName}: ${msg.plainMessage}`);
 }
 
 export function setupLiveChatForFaction({ broadcastId, faction, io }) {
