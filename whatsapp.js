@@ -4,7 +4,19 @@ import qrcode from "qrcode-terminal";
 
 const TARGET_GROUP_ID = ""; // DX LCK Group
 
-const client = new Client({ authStrategy: new LocalAuth() });
+const authStrategy = new LocalAuth();
+
+// Patch the logout method to catch the EBUSY error on Windows
+const originalLogout = authStrategy.logout.bind(authStrategy);
+authStrategy.logout = async () => {
+  try {
+    await originalLogout();
+  } catch (err) {
+    console.error("Error during LocalAuth logout (ignored to prevent crash):", err);
+  }
+};
+
+const client = new Client({ authStrategy });
 const clientReady = new Promise((resolve) => {
   client.on("ready", () => {
     console.log("Client is ready!");
@@ -44,6 +56,14 @@ client.on("qr", (qr) => {
   // Generate and scan this code with your phone
   console.log("QR RECEIVED", qr);
   qrcode.generate(qr, { small: true });
+});
+
+client.on("disconnected", (reason) => {
+  console.log("WhatsApp Client disconnected:", reason);
+});
+
+client.on("error", (err) => {
+  console.error("WhatsApp Client Error:", err);
 });
 
 // client.on("message", async (msg) => {
