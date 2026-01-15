@@ -21,7 +21,7 @@
     "socket.io": "^4.8.1",
     "sound-play": "^1.1.0",
     "tesseract.js": "^6.0.1",
-    "whatsapp-web.js": "github:pedroslopez/whatsapp-web.js#main",
+    "whatsapp-web.js": "^1.34.4",
     "youtube-chat": "^2.2.0"
   }
 }

@@ -47,9 +47,16 @@ export async function sendTextToDXGroup(
     }
   }
 
-  const res = await client.sendMessage(TARGET_GROUP_ID, message);
-  if (pauseAfterMs > 0) await delay(pauseAfterMs);
-  return res;
+  try {
+    const res = await client.sendMessage(TARGET_GROUP_ID, message, {
+      sendSeen: false,
+    });
+    if (pauseAfterMs > 0) await delay(pauseAfterMs);
+    return res;
+  } catch (err) {
+    console.error("Failed to send WhatsApp message:", err);
+    return null;
+  }
 }
 
 client.on("qr", (qr) => {
@@ -78,5 +85,26 @@ client.on("error", (err) => {
 //     console.log("Group ID:", chat.id._serialized);
 //   }
 // });
+
+// Prevent process from crashing on unhandled rejections or exceptions from the library
+process.on("unhandledRejection", (reason, promise) => {
+  if (reason && reason.stack && reason.stack.includes("whatsapp-web.js")) {
+    console.error("Caught unhandled rejection from WhatsApp library:", reason);
+  } else {
+    // For other rejections, you might want to log them or handle them differently
+    // but at least we prevent the crash.
+    console.error("Unhandled Rejection at:", promise, "reason:", reason);
+  }
+});
+
+process.on("uncaughtException", (err) => {
+  if (err && err.stack && err.stack.includes("whatsapp-web.js")) {
+    console.error("Caught uncaught exception from WhatsApp library:", err);
+  } else {
+    console.error("Uncaught Exception:", err);
+    // For non-WhatsApp errors, it might be safer to exit, but we'll keep it running for now
+    // as per user request to "not crash".
+  }
+});
 
 client.initialize();
