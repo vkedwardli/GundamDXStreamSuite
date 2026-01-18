@@ -82,11 +82,26 @@ export async function checkLiveStreams(broadcastStatus) {
     });
 
     const liveStreams = response.data.items || [];
+
     liveStreams.sort((a, b) => {
       const titleA = a.snippet.title || "";
       const titleB = b.snippet.title || "";
-      if (titleA.includes("連邦側") && !titleB.includes("連邦側")) return -1;
-      if (!titleA.includes("連邦側") && titleB.includes("連邦側")) return 1;
+
+      const isFedA = titleA.includes("連邦側");
+      const isZeonA = titleA.includes("自護側");
+      const isFedB = titleB.includes("連邦側");
+      const isZeonB = titleB.includes("自護側");
+
+      // If A is definitely Federation, it goes first (-1)
+      if (isFedA) return -1;
+      // If A is definitely Zeon, it goes second (1)
+      if (isZeonA) return 1;
+
+      // If B is definitely Federation, it goes first (so A goes second: 1)
+      if (isFedB) return 1;
+      // If B is definitely Zeon, it goes second (so A goes first: -1)
+      if (isZeonB) return -1;
+
       return 0;
     });
     return liveStreams.map((stream) => stream.id);
