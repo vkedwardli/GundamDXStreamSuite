@@ -2,7 +2,8 @@ import whatsapp from "whatsapp-web.js";
 const { Client, LocalAuth } = whatsapp;
 import qrcode from "qrcode-terminal";
 
-const TARGET_GROUP_ID = ""; // DX LCK Group
+export const PUBLIC_GROUP_ID = ""; // DX LCK Group
+export const TEST_GROUP_ID = ""; // Internal Testing Group
 
 const authStrategy = new LocalAuth();
 
@@ -12,49 +13,86 @@ authStrategy.logout = async () => {
   try {
     await originalLogout();
   } catch (err) {
-    console.error("Error during LocalAuth logout (ignored to prevent crash):", err);
+    console.error(
+      "Error during LocalAuth logout (ignored to prevent crash):",
+      err,
+    );
   }
 };
 
-const client = new Client({ authStrategy });
+console.log("Initializing WhatsApp client...");
+const client = new Client({
+  authStrategy,
+  puppeteer: {
+    handleSIGINT: false,
+  },
+});
+
+client.on("loading_screen", (percent, message) => {
+  console.log("WhatsApp Loading:", percent, message);
+});
+
+client.on("authenticated", () => {
+  console.log("WhatsApp Authenticated");
+});
+
+client.on("auth_failure", (msg) => {
+  console.error("WhatsApp Auth Failure:", msg);
+});
+
 const clientReady = new Promise((resolve) => {
+  const timeout = setTimeout(() => {
+    console.error(
+      "WARNING: WhatsApp client has not become ready after 60 seconds.",
+    );
+    console.error(
+      "Possible fixes: 1. Delete .wwebjs_auth and .wwebjs_cache folders. 2. Ensure internet connection. 3. Check for zombie Chrome processes.",
+    );
+  }, 60000);
+
   client.on("ready", () => {
-    console.log("Client is ready!");
+    clearTimeout(timeout);
+    console.log("WhatsApp Client is ready!");
     resolve();
   });
 });
-const dxChatPromise = clientReady.then(() =>
-  client.getChatById(TARGET_GROUP_ID)
-);
 
 const delay = (ms) => new Promise((res) => setTimeout(res, ms));
 
 // Send a text message to the target group.
 export async function sendTextToDXGroup(
   message,
-  { withTyping = false, typingDurationMs = 1800, pauseAfterMs = 800 } = {}
+  {
+    withTyping = false,
+    typingDurationMs = 1800,
+    pauseAfterMs = 800,
+    groupId = PUBLIC_GROUP_ID,
+  } = {},
 ) {
   await clientReady; // Ensure client is ready before sending
-  const chat = await dxChatPromise;
 
-  if (withTyping && chat) {
+  if (withTyping) {
     try {
+      const chat = await client.getChatById(groupId);
       await chat.sendStateTyping();
       await delay(typingDurationMs);
       await chat.clearState(); // stop typing indicator
     } catch (err) {
-      console.error("Failed to send typing state:", err);
+      console.warn(
+        `Warning: Failed to set typing state for ${groupId} (sending message anyway):`,
+        err.message,
+      );
     }
   }
 
   try {
-    const res = await client.sendMessage(TARGET_GROUP_ID, message, {
+    const res = await client.sendMessage(groupId, message, {
       sendSeen: false,
     });
     if (pauseAfterMs > 0) await delay(pauseAfterMs);
     return res;
   } catch (err) {
-    console.error("Failed to send WhatsApp message:", err);
+    console.error(`Failed to send WhatsApp message to ${groupId}:`, err);
     return null;
   }
 }
@@ -88,11 +126,15 @@ client.on("error", (err) => {
 
 // Prevent process from crashing on unhandled rejections or exceptions from the library
 process.on("unhandledRejection", (reason, promise) => {
-  if (reason && reason.stack && reason.stack.includes("whatsapp-web.js")) {
-    console.error("Caught unhandled rejection from WhatsApp library:", reason);
+  if (
+    reason &&
+    ((reason.stack && reason.stack.includes("whatsapp-web.js")) ||
+      reason.message)
+  ) {
+    console.error("Caught unhandled rejection from WhatsApp library:");
+    console.error("Message:", reason.message || "No message");
+    console.error("Stack:", reason.stack || "No stack trace");
   } else {
-    // For other rejections, you might want to log them or handle them differently
-    // but at least we prevent the crash.
     console.error("Unhandled Rejection at:", promise, "reason:", reason);
   }
 });
@@ -102,9 +144,8 @@ process.on("uncaughtException", (err) => {
     console.error("Caught uncaught exception from WhatsApp library:", err);
   } else {
     console.error("Uncaught Exception:", err);
-    // For non-WhatsApp errors, it might be safer to exit, but we'll keep it running for now
-    // as per user request to "not crash".
   }
 });
 
+console.log("Calling WhatsApp client.initialize()...");
 client.initialize();

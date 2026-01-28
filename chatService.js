@@ -3,8 +3,9 @@ import { scheduler } from "node:timers/promises";
 import { Faction, Megaphone, TTSModel } from "./config.js";
 import { textToSpeech } from "./ttsService.js";
 import { getViewerCount } from "./youtubeService.js"; // For viewer count updates
+import { getRandomDelay } from "./systemUtils.js";
 import { createMessage } from "./messageService.js";
-import { sendTextToDXGroup } from "./whatsapp.js";
+import { sendTextToDXGroup, TEST_GROUP_ID, PUBLIC_GROUP_ID } from "./whatsapp.js";
 
 let fedLiveChat = null;
 let zeonLiveChat = null;
@@ -13,6 +14,7 @@ let viewerCountInterval = null;
 const messageCache = new Map();
 
 let currentMegaphoneState = Megaphone.ENABLED; // Internal state for chatService
+let isPublicStream = true;
 
 export function updateMegaphoneState(newState) {
   currentMegaphoneState = newState;
@@ -92,7 +94,13 @@ function processChatMessage(chatItem, faction, io) {
   io.emit("message", msg);
 
   const prefix = faction === Faction.FEDERATION ? "🔵" : "🔴";
-  sendTextToDXGroup(`${prefix} ${msg.authorName}: ${msg.plainMessage}`);
+  const targetGroupId = isPublicStream ? PUBLIC_GROUP_ID : TEST_GROUP_ID;
+  sendTextToDXGroup(`${prefix} ${msg.authorName}: ${msg.plainMessage}`, {
+    groupId: targetGroupId,
+    withTyping: true,
+    typingDurationMs: getRandomDelay(200, 450), // Randomize typing speed
+    pauseAfterMs: getRandomDelay(50, 150),
+  });
 }
 
 export function setupLiveChatForFaction({ broadcastId, faction, io }) {
@@ -145,7 +153,8 @@ async function fetchAndSumViewers({ broadcastIds, io }) {
   }
 }
 
-export async function startLiveChatAndViewerCount({ broadcastIds, io }) {
+export async function startLiveChatAndViewerCount({ broadcastIds, io, isPublic = true }) {
+  isPublicStream = isPublic;
   if (broadcastIds.length !== 2) {
     console.error(
       "Cannot start live chat and viewer count: Expected 2 broadcast IDs."
