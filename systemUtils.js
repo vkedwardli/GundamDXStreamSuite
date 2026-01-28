@@ -21,10 +21,14 @@ export async function startDXOPScreen() {
   const tempUserDataDir = path.join(__dirname, "chrome-user-data"); // Removed curly brace from path
   try {
     await fs.mkdir(tempUserDataDir, { recursive: true });
-    const chromePath =
-      os.platform() === "win32"
-        ? "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe" // Common path on Windows
-        : "google-chrome"; // Common command on Linux, adjust if needed for macOS
+    let chromePath;
+    if (os.platform() === "win32") {
+      chromePath = "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe";
+    } else if (os.platform() === "darwin") {
+      chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+    } else {
+      chromePath = "google-chrome"; // Linux default
+    }
     const url = "http://127.0.0.1:3000/control.html";
 
     console.log(

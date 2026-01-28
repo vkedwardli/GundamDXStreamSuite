@@ -3,9 +3,25 @@ dotenv.config();
 
 export const isDev = process.env.NODE_ENV === "development";
 
+import os from "os";
+
 // Path to OBS directory and executable
-export const obsDir = "C:\\\\Program Files\\\\obs-studio\\\\bin\\\\64bit";
-export const obsPath = `${obsDir}\\\\obs64.exe`; // Full path to executable
+let obsDir = "";
+let obsPath = "";
+
+if (os.platform() === "win32") {
+  obsDir = "C:\\\\Program Files\\\\obs-studio\\\\bin\\\\64bit";
+  obsPath = `${obsDir}\\\\obs64.exe`;
+} else if (os.platform() === "darwin") {
+  obsDir = "/Applications/OBS.app/Contents/MacOS";
+  obsPath = `${obsDir}/obs`;
+} else {
+  // Linux or other fallback
+  obsDir = "/usr/bin"; // standard linux location
+  obsPath = "obs";
+}
+
+export { obsDir, obsPath };
 
 // OAuth 2.0 Scopes and Token Path
 export const SCOPES = ["https://www.googleapis.com/auth/youtube"];

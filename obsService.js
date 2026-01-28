@@ -113,16 +113,25 @@ export async function launchOBS() {
           );
 
           // Reset capture card DirectShow settings (fire and forget)
-          exec(
-            `${path.join(os.homedir(), "Documents\\WebCameraConfig.exe")}`,
-            { cwd: `${path.join(os.homedir(), "Documents\\")}` },
-            (error, stdout, stderr) => {
-              if (error)
-                console.error(`Error setting camera config: ${error.message}`);
-              else if (stderr) console.error(`Camera config stderr: ${stderr}`);
-              else console.log("Capture card config set attempt finished.");
-            }
-          );
+          if (os.platform() === "win32") {
+            exec(
+              `${path.join(os.homedir(), "Documents\\WebCameraConfig.exe")}`,
+              { cwd: `${path.join(os.homedir(), "Documents\\")}` },
+              (error, stdout, stderr) => {
+                if (error)
+                  console.error(
+                    `Error setting camera config: ${error.message}`
+                  );
+                else if (stderr)
+                  console.error(`Camera config stderr: ${stderr}`);
+                else console.log("Capture card config set attempt finished.");
+              }
+            );
+          } else {
+            console.log(
+              "Skipping WebCameraConfig.exe execution: Not on Windows."
+            );
+          }
 
           console.log(
             "Waiting 10 seconds before attempting to connect to OBS WebSocket..."
@@ -162,7 +171,6 @@ export async function closeOBS() {
     await scheduler.wait(3000); // Give a moment for OBS to process disconnect
 
     // Attempt to terminate OBS process
-    // Note: taskkill is Windows-specific. For cross-platform, a library or OS check is needed.
     if (os.platform() === "win32") {
       exec("taskkill /im obs64.exe", (error, stdout, stderr) => {
         // Added /f to force close
@@ -178,9 +186,26 @@ export async function closeOBS() {
         }
         console.log("Attempted to terminate OBS process.");
       });
+    } else if (os.platform() === "darwin") {
+      exec("killall OBS", (error, stdout, stderr) => {
+        if (error) {
+          // killall returns non-zero if no process matched
+          if (!error.message.includes("No matching processes")) {
+            console.error(`Error terminating OBS (killall): ${error.message}`);
+          }
+        } else {
+          console.log("Attempted to terminate OBS process (killall).");
+        }
+      });
     } else {
-      console.log("OBS termination skipped: Not on Windows.");
-      // Implement termination for other OS if needed, e.g., pkill obs
+      exec("pkill obs", (error, stdout, stderr) => {
+        if (error && error.code !== 1) {
+          // code 1 means no process found usually
+          console.error(`Error terminating OBS (pkill): ${error.message}`);
+        } else {
+          console.log("Attempted to terminate OBS process (pkill).");
+        }
+      });
     }
   } catch (error) {
     console.error("Error closing OBS:", error);
