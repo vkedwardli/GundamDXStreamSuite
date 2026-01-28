@@ -44,6 +44,14 @@ export async function startDXOPScreen() {
       [
         "--kiosk",
         "--new-window",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--no-service-autorun",
+        "--no-report-upload",
+        "--disable-infobars",
+        "--disable-session-crashed-bubble",
+        "--disable-translate",
+        "--check-for-update-interval=31536000",
         "--window-position=1920,0", // Assumes secondary monitor is to the right
         `--user-data-dir=${tempUserDataDir}`,
         url,
@@ -65,6 +73,25 @@ export async function startDXOPScreen() {
       console.log(`Chrome process for DXOP screen exited with code ${code}`);
     });
     console.log("DXOP screen launch initiated.");
+
+    // Force focus the Chrome window after a short delay
+    if (os.platform() === "win32") {
+      setTimeout(() => {
+        const psScriptPath = path.join(__dirname, "focusChrome.ps1");
+        console.log(`Executing focus script via 'start': ${psScriptPath}`);
+        
+        // "start /min" launches a new minimized window, which has permission to change focus
+        const command = `start /min powershell -NoProfile -ExecutionPolicy Bypass -File "${psScriptPath}"`;
+        
+        exec(command, (error) => {
+          if (error) {
+            console.error(`Failed to launch focus script: ${error.message}`);
+          } else {
+            console.log("Focus script launched successfully.");
+          }
+        });
+      }, 3000); // 3 seconds delay
+    }
   } catch (error) {
     console.error("Error in startDXOPScreen setup:", error);
   }
