@@ -270,9 +270,9 @@ const processBattleOutcome = () => {
   const detectedAreas = new Set(detectionBuffer);
   detectionBuffer.clear(); // Process and clear immediately
 
-  const zeonLost = detectedAreas.has("Area1") && detectedAreas.has("Area2");
+  const zeonLost = detectedAreas.has("Area3") && detectedAreas.has("Area4");
   const federationLost =
-    detectedAreas.has("Area3") && detectedAreas.has("Area4");
+    detectedAreas.has("Area1") && detectedAreas.has("Area2");
 
   let outcome = null;
 
