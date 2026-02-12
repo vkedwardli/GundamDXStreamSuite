@@ -24,18 +24,28 @@ const audioQueue = [];
 let isPlaying = false;
 
 // Function to preprocess text for Azure AI TTS
-function preprocessAzureText(inputText) {
+function preprocessAzureText(inputText, voiceID) {
   let processedText = inputText;
-  // Order matters for some replacements to avoid conflicts
-  processedText = processedText.replace(/usus/g, "呃suz"); // Must be before other 'us' if any
-  processedText = processedText.replace(/[鳩𨳊]/g, "朻");
-  processedText = processedText.replace(/[閪屄]/g, "西");
-  processedText = processedText.replace(/𨶙/g, "撚");
-  processedText = processedText.replace(/[柒𨳍]/g, "chaat");
-  processedText = processedText.replace(/仆/g, "poke");
-  processedText = processedText.replace(/矇/g, "mown");
-  processedText = processedText.replace(/咁/g, "感");
-  // Add more replacements here if needed
+
+  // Cantonese (zh-HK) specific replacements
+  if (voiceID.startsWith("zh-HK")) {
+    // Order matters for some replacements to avoid conflicts
+    processedText = processedText.replace(/usus/g, "呃suz"); // Must be before other 'us' if any
+    processedText = processedText.replace(/[鳩𨳊]/g, "朻");
+    processedText = processedText.replace(/[閪屄]/g, "西");
+    processedText = processedText.replace(/𨶙/g, "撚");
+    processedText = processedText.replace(/[柒𨳍]/g, "chaat");
+    processedText = processedText.replace(/仆/g, "poke");
+    processedText = processedText.replace(/矇/g, "mown");
+    processedText = processedText.replace(/咁/g, "感");
+  }
+
+  // Mandarin (zh-CN) specific replacements
+  if (voiceID.startsWith("zh-CN")) {
+    processedText = processedText.replace(/[撚𨶙]/g, "能");
+    processedText = processedText.replace(/[鳩𨳊]/g, "夠");
+  }
+
   return processedText;
 }
 
@@ -50,14 +60,14 @@ async function processTTSQueue() {
   try {
     if (model === TTSModel.AZURE_AI) {
       const originalText = text;
-      text = preprocessAzureText(text);
+      text = preprocessAzureText(text, voiceID);
       if (originalText !== text) {
         console.log(
-          `Azure TTS: Original text: "${originalText}" | Preprocessed: "${text}"`
+          `Azure TTS (${voiceID}): Original text: "${originalText}" | Preprocessed: "${text}"`,
         );
       }
       await execPromise(
-        `edge-playback --rate=-30% --volume=+100% --voice "${voiceID}" --text "${text}"`
+        `edge-playback --rate=-30% --volume=+100% --voice "${voiceID}" --text "${text}"`,
       );
       console.log("Azure AI Speech playback completed");
     } else {
@@ -88,7 +98,7 @@ async function processTTSQueue() {
             Authorization: `Bearer ${MINIMAX_API_KEY}`,
             "Content-Type": "application/json",
           },
-        }
+        },
       );
 
       // console.log(response.data.base_resp); // Keep this commented unless debugging
@@ -113,7 +123,7 @@ async function processTTSQueue() {
           // Clean up the temporary file
           setTimeout(() => {
             unlink(tempFilePath).catch((err) =>
-              console.error("Error unlinking temp TTS file:", err)
+              console.error("Error unlinking temp TTS file:", err),
             );
           }, 1000);
         } catch (error) {
@@ -122,7 +132,7 @@ async function processTTSQueue() {
       } else {
         console.error(
           "API response error:",
-          response.data?.base_resp || "Unknown API error"
+          response.data?.base_resp || "Unknown API error",
         );
       }
     }

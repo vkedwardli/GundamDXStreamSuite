@@ -67,6 +67,14 @@ function processChatMessage(chatItem, faction, io) {
     msg.plainMessage = `${currentMegaphoneState.icon} ` + ttsText;
     ttsVoiceID = "zh-HK-WanLungNeural"; // Male
   } else if (
+    msg.plainMessage.startsWith("!msay ") ||
+    msg.plainMessage.startsWith("！msay ")
+  ) {
+    ttsText = msg.plainMessage.slice(6);
+    msg.message = `${currentMegaphoneState.icon} ` + msg.message.slice(6);
+    msg.plainMessage = `${currentMegaphoneState.icon} ` + ttsText;
+    ttsVoiceID = "zh-CN-YunjianNeural";
+  } else if (
     msg.plainMessage.startsWith("!gossip ") ||
     msg.plainMessage.startsWith("！gossip ")
   ) {
@@ -75,6 +83,14 @@ function processChatMessage(chatItem, faction, io) {
     msg.plainMessage = `${currentMegaphoneState.gossip} ` + ttsText;
     ttsVoiceID = "zh-HK-HiuMaanNeural"; // Casual Female
   } else if (
+    msg.plainMessage.startsWith("!mgossip ") ||
+    msg.plainMessage.startsWith("！mgossip ")
+  ) {
+    ttsText = msg.plainMessage.slice(9);
+    msg.message = `${currentMegaphoneState.gossip} ` + msg.message.slice(9);
+    msg.plainMessage = `${currentMegaphoneState.gossip} ` + ttsText;
+    ttsVoiceID = "zh-CN-XiaoyiNeural";
+  } else if (
     msg.plainMessage.startsWith("!anchor ") ||
     msg.plainMessage.startsWith("！anchor ")
   ) {
@@ -82,6 +98,14 @@ function processChatMessage(chatItem, faction, io) {
     msg.message = `${currentMegaphoneState.anchor} ` + msg.message.slice(8);
     msg.plainMessage = `${currentMegaphoneState.anchor} ` + ttsText;
     ttsVoiceID = "zh-HK-HiuGaaiNeural"; // News Reporter Female
+  } else if (
+    msg.plainMessage.startsWith("!manchor ") ||
+    msg.plainMessage.startsWith("！manchor ")
+  ) {
+    ttsText = msg.plainMessage.slice(9);
+    msg.message = `${currentMegaphoneState.anchor} ` + msg.message.slice(9);
+    msg.plainMessage = `${currentMegaphoneState.anchor} ` + ttsText;
+    ttsVoiceID = "zh-CN-XiaoxiaoNeural";
   }
 
   if (ttsText && currentMegaphoneState.enabled) {
