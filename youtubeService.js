@@ -306,3 +306,52 @@ export async function getViewerCount(videoId) {
     return 0;
   }
 }
+
+const liveChatIdCache = new Map();
+
+export function clearLiveChatCache() {
+  liveChatIdCache.clear();
+  console.log("YouTube live chat ID cache cleared.");
+}
+
+export async function sendLiveChatMessage(videoId, message) {
+  try {
+    let liveChatId = liveChatIdCache.get(videoId);
+
+    if (!liveChatId) {
+      const videoResponse = await youtube.videos.list({
+        part: ["liveStreamingDetails"],
+        id: videoId,
+      });
+
+      liveChatId =
+        videoResponse.data.items[0]?.liveStreamingDetails?.activeLiveChatId;
+
+      if (liveChatId) {
+        liveChatIdCache.set(videoId, liveChatId);
+      }
+    }
+
+    if (!liveChatId) {
+      console.error(`No active live chat found for video ${videoId}`);
+      return;
+    }
+
+    // 2. Insert the message
+    await youtube.liveChatMessages.insert({
+      part: ["snippet"],
+      resource: {
+        snippet: {
+          liveChatId: liveChatId,
+          type: "textMessageEvent",
+          textMessageDetails: {
+            messageText: message,
+          },
+        },
+      },
+    });
+    console.log(`Sent message to YouTube (${videoId}): ${message}`);
+  } catch (error) {
+    console.error(`Error sending YouTube live chat message:`, error.message);
+  }
+}

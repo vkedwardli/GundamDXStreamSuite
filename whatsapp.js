@@ -21,7 +21,7 @@ authStrategy.logout = async () => {
 };
 
 console.log("Initializing WhatsApp client...");
-const client = new Client({
+export const client = new Client({
   authStrategy,
   puppeteer: {
     handleSIGINT: false,

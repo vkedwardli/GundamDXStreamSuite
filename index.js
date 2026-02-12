@@ -12,6 +12,8 @@ import {
   createScheduledLiveStream,
   updateVideoDetails,
   deleteLiveBroadcasts,
+  sendLiveChatMessage,
+  clearLiveChatCache,
 } from "./youtubeService.js";
 import {
   obs, // direct obs instance for some specific calls if needed outside service
@@ -30,7 +32,12 @@ import {
   updateMegaphoneState,
 } from "./chatService.js";
 import { setupServer, io as socketIoInstance } from "./serverSetup.js"; // Import io
-import { startDXOPScreen, connectSpeaker, lofiTest, getRandomDelay } from "./systemUtils.js";
+import {
+  startDXOPScreen,
+  connectSpeaker,
+  lofiTest,
+  getRandomDelay,
+} from "./systemUtils.js";
 import { createMessage } from "./messageService.js";
 import {
   broadcastGameState,
@@ -38,7 +45,12 @@ import {
   markCameraAsDisabled,
 } from "./score.js";
 import { startTimeAnnouncer } from "./timeAnnouncer.js";
-import { sendTextToDXGroup, TEST_GROUP_ID, PUBLIC_GROUP_ID } from "./whatsapp.js";
+import {
+  sendTextToDXGroup,
+  TEST_GROUP_ID,
+  PUBLIC_GROUP_ID,
+  client as whatsappClient,
+} from "./whatsapp.js";
 // --- Global State (moved from various places, consider if these need to be in a dedicated state module later) ---
 let megaphoneState = Megaphone.ENABLED;
 let blockStartStreamingUntil = 0;
@@ -148,8 +160,8 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
     io.emit("isStreaming", { isStreaming: false, streamType: null });
     console.error(
       `Start request ignored: Please wait for ${Math.ceil(
-        (blockStartStreamingUntil - Date.now()) / 1000
-      )} seconds before starting again.`
+        (blockStartStreamingUntil - Date.now()) / 1000,
+      )} seconds before starting again.`,
     );
     textToSpeech({
       text: "啱啱先停播，等一分鐘先再開直播啦",
@@ -177,19 +189,19 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
       console.log("Upcoming stream(s) already scheduled:", broadcastIds);
     } else {
       console.log(
-        "No active or upcoming streams found. Creating new scheduled streams..."
+        "No active or upcoming streams found. Creating new scheduled streams...",
       );
       try {
         const broadcastPromises = [Faction.FEDERATION, Faction.ZEON].map(
-          (faction) => createScheduledLiveStream({ faction, isPublic })
+          (faction) => createScheduledLiveStream({ faction, isPublic }),
         );
         const broadcastResults = await Promise.all(broadcastPromises);
 
         const federationResult = broadcastResults.find(
-          (result) => result.faction === Faction.FEDERATION
+          (result) => result.faction === Faction.FEDERATION,
         );
         const zeonResult = broadcastResults.find(
-          (result) => result.faction === Faction.ZEON
+          (result) => result.faction === Faction.ZEON,
         );
 
         if (!federationResult || !zeonResult) {
@@ -211,7 +223,7 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
         ]);
         console.log(
           "Successfully created and updated new streams:",
-          broadcastIds
+          broadcastIds,
         );
 
         try {
@@ -238,13 +250,13 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
   if (broadcastIds.length !== 2) {
     console.error(
       "Failed to obtain 2 valid broadcast IDs. Current IDs:",
-      broadcastIds
+      broadcastIds,
     );
     if (broadcastIds.length > 0) await deleteLiveBroadcasts(broadcastIds); // Cleanup
 
     if (retryCount < MAX_RETRIES) {
       console.log(
-        `Retrying stream setup (Attempt ${retryCount + 1}/${MAX_RETRIES})`
+        `Retrying stream setup (Attempt ${retryCount + 1}/${MAX_RETRIES})`,
       );
       await scheduler.wait(5000); // Wait before retrying
       return startStreaming({ isPublic, retryCount: retryCount + 1, io });
@@ -263,7 +275,7 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
   console.log(
     `Stream starting process initiated for ${
       isPublic ? "Public" : "Unlisted"
-    } streams.`
+    } streams.`,
   );
 
   if (!isPublic) {
@@ -295,7 +307,7 @@ async function stopStreaming(io) {
     if (isLateNight) {
       const farewellMessage = "歡樂今宵再會，各位觀眾……晚安";
       console.log(
-        "Late night stop detected. Playing and sending announcement."
+        "Late night stop detected. Playing and sending announcement.",
       );
 
       // Send message to local chat display
@@ -325,6 +337,7 @@ async function stopStreaming(io) {
 
     await stopOBSStreamingAndRecognition(); // From obsService
     stopLiveChatAndViewerCount(); // From chatService
+    clearLiveChatCache();
 
     currentBroadcastIds = []; // Clear current broadcast IDs
     if (io) {
@@ -348,7 +361,7 @@ schedule.scheduleJob("10 2 * * *", async () => {
     socketIoInstance.emit("status", "Streaming stopped by schedule");
   } else {
     console.error(
-      "Scheduled task: io instance not available to stop streaming."
+      "Scheduled task: io instance not available to stop streaming.",
     );
   }
 });
@@ -361,6 +374,83 @@ async function main() {
   await startDXOPScreen();
   await connectSpeaker("HK Onyx Studio", "0C:A6:94:08:F6:A1");
   startTimeAnnouncer();
+
+  // WhatsApp command handler for forwarding messages to YouTube Live Chat
+  whatsappClient.on("message", async (msg) => {
+    // 1. Guard: Only process messages from the allowed groups
+    const isPublicGroup = msg.from === PUBLIC_GROUP_ID;
+    const isTestGroup = msg.from === TEST_GROUP_ID;
+    if (!isPublicGroup && !isTestGroup) return;
+
+    // 2. Guard: Only process if it starts with the expected commands
+    const body = msg.body.trim();
+    if (!body.startsWith("!fed ") && !body.startsWith("!zeon ")) return;
+
+    const offlineResponses = [
+      "東主有喜，暫停直播。",
+      "噢~噢噢噢~噢噢噢~ 我俾碌蕉你含~",
+      "朋友，你返去印度食蕉啦",
+      "邊撚個chok到呢句出嚟，就輸一蚊",
+      "由於節目調動嘅關係，原定播映嘅龍珠二世將會暫停播映，敬請留意。",
+      "你嗌破喉嚨都冇人理你㗎喇！哈哈哈哈哈哈哈哈~",
+    ];
+
+    const sendOfflineReply = async () => {
+      const randomMsg =
+        offlineResponses[Math.floor(Math.random() * offlineResponses.length)];
+      await msg.reply(randomMsg);
+    };
+
+    // 3. Guard: If no active streams are found, send funny offline response
+    if (currentBroadcastIds.length !== 2) {
+      await sendOfflineReply();
+      return;
+    }
+
+    // 4. Guard: Ensure the group matches the current stream visibility
+    if (
+      (currentStreamType === "public" && !isPublicGroup) ||
+      (currentStreamType === "unlisted" && !isTestGroup)
+    ) {
+      return;
+    }
+
+    let targetVideoId = null;
+    let messageContent = "";
+
+    if (body.startsWith("!fed ")) {
+      targetVideoId = currentBroadcastIds[0];
+      messageContent = body.slice(5).trim();
+    } else if (body.startsWith("!zeon ")) {
+      targetVideoId = currentBroadcastIds[1];
+      messageContent = body.slice(6).trim();
+    }
+
+    if (targetVideoId && messageContent) {
+      try {
+        const contact = await msg.getContact();
+        // Use only pushname to avoid exposing phone numbers. Fallback to a generic name if missing.
+        const senderName = contact.pushname || "神秘人";
+
+        // Check if message starts with any of the TTS command variants
+        const isTTS = /^[!！](m?say|m?gossip|m?anchor)\b/i.test(messageContent);
+
+        if (isTTS) {
+          // Send the actual message (which contains the TTS command)
+          await sendLiveChatMessage(targetVideoId, messageContent);
+          // Send the announcement message
+          await sendLiveChatMessage(targetVideoId, `💬${senderName} 開咪`);
+        } else {
+          await sendLiveChatMessage(
+            targetVideoId,
+            `💬${senderName}: ${messageContent}`,
+          );
+        }
+      } catch (error) {
+        console.error("Error processing WhatsApp to YouTube command:", error);
+      }
+    }
+  });
 
   // Example: For testing lofi mode directly on start (usually triggered by client)
   // lofiTest(io);
