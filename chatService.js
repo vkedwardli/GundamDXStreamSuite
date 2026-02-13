@@ -1,6 +1,6 @@
 import { LiveChat } from "youtube-chat";
 import { scheduler } from "node:timers/promises";
-import { Faction, Megaphone, TTSModel } from "./config.js";
+import { Faction, Megaphone, TTSModel, MODERATION_FILTERS } from "./config.js";
 import { textToSpeech } from "./ttsService.js";
 import { getViewerCount } from "./youtubeService.js"; // For viewer count updates
 import { getRandomDelay } from "./systemUtils.js";
@@ -20,6 +20,15 @@ export function updateMegaphoneState(newState) {
   currentMegaphoneState = newState;
 }
 
+function undoModerationFilters(text) {
+  let originalText = text;
+  for (const [original, replacement] of Object.entries(MODERATION_FILTERS)) {
+    const regex = new RegExp(replacement, "g");
+    originalText = originalText.replace(regex, original);
+  }
+  return originalText;
+}
+
 function processChatMessage(chatItem, faction, io) {
   const msg = createMessage({
     isFederation: faction === Faction.FEDERATION,
@@ -28,12 +37,14 @@ function processChatMessage(chatItem, faction, io) {
     message: chatItem.message
       .map((item) =>
         item.text
-          ? item.text
+          ? undoModerationFilters(item.text)
           : `<img class="emoji" src="${item.url}" alt="${item.emojiText}" shared-tooltip-text="${item.alt}" >`
       )
       .join(""),
     plainMessage: chatItem.message
-      .map((item) => (item.text ? item.text : ` :${item.alt}: `))
+      .map((item) =>
+        item.text ? undoModerationFilters(item.text) : ` :${item.alt}: `
+      )
       .join(""),
     timestamp: new Date(chatItem.timestamp),
   });

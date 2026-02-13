@@ -51,6 +51,13 @@ export const Megaphone = Object.freeze({
   MUTED: { enabled: false, icon: "🔇", gossip: "😶", anchor: "🔕" },
 });
 
+// Dictionary for bypassing YouTube auto-moderation
+// Key: The word to filter for YouTube
+// Value: The replacement word to actually send
+export const MODERATION_FILTERS = {
+  死: "歹匕",
+};
+
 // Export environment variables
 export const CLIENT_ID = process.env.CLIENT_ID;
 export const CLIENT_SECRET = process.env.CLIENT_SECRET;

@@ -8,6 +8,7 @@ import {
   SCOPES,
   TOKEN_PATH,
   Faction,
+  MODERATION_FILTERS,
 } from "./config.js";
 
 // OAuth 2.0 Client Configuration
@@ -314,6 +315,15 @@ export function clearLiveChatCache() {
   console.log("YouTube live chat ID cache cleared.");
 }
 
+function applyModerationFilters(text) {
+  let filteredText = text;
+  for (const [original, replacement] of Object.entries(MODERATION_FILTERS)) {
+    const regex = new RegExp(original, "g");
+    filteredText = filteredText.replace(regex, replacement);
+  }
+  return filteredText;
+}
+
 export async function sendLiveChatMessage(videoId, message) {
   try {
     let liveChatId = liveChatIdCache.get(videoId);
@@ -337,6 +347,9 @@ export async function sendLiveChatMessage(videoId, message) {
       return;
     }
 
+    // Bypass YouTube auto-moderation
+    const safeMessage = applyModerationFilters(message);
+
     // 2. Insert the message
     await youtube.liveChatMessages.insert({
       part: ["snippet"],
@@ -345,12 +358,12 @@ export async function sendLiveChatMessage(videoId, message) {
           liveChatId: liveChatId,
           type: "textMessageEvent",
           textMessageDetails: {
-            messageText: message,
+            messageText: safeMessage,
           },
         },
       },
     });
-    console.log(`Sent message to YouTube (${videoId}): ${message}`);
+    console.log(`Sent message to YouTube (${videoId}): ${safeMessage}`);
   } catch (error) {
     console.error(`Error sending YouTube live chat message:`, error.message);
   }
