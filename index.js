@@ -436,10 +436,11 @@ async function main() {
         const isTTS = /^[!！](m?say|m?gossip|m?anchor)\b/i.test(messageContent);
 
         if (isTTS) {
-          // Send the actual message (which contains the TTS command)
-          await sendLiveChatMessage(targetVideoId, messageContent);
-          // Send the announcement message
-          await sendLiveChatMessage(targetVideoId, `💬${senderName} 開咪`);
+          // Send a single combined message: "!gossip Hello !:Edward Li"
+          await sendLiveChatMessage(
+            targetVideoId,
+            `${messageContent} !:${senderName}`,
+          );
         } else {
           await sendLiveChatMessage(
             targetVideoId,

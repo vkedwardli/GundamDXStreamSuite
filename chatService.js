@@ -5,7 +5,11 @@ import { textToSpeech } from "./ttsService.js";
 import { getViewerCount } from "./youtubeService.js"; // For viewer count updates
 import { getRandomDelay } from "./systemUtils.js";
 import { createMessage } from "./messageService.js";
-import { sendTextToDXGroup, TEST_GROUP_ID, PUBLIC_GROUP_ID } from "./whatsapp.js";
+import {
+  sendTextToDXGroup,
+  TEST_GROUP_ID,
+  PUBLIC_GROUP_ID,
+} from "./whatsapp.js";
 
 let fedLiveChat = null;
 let zeonLiveChat = null;
@@ -15,6 +19,7 @@ const messageCache = new Map();
 
 let currentMegaphoneState = Megaphone.ENABLED; // Internal state for chatService
 let isPublicStream = true;
+const serviceStartTime = Date.now();
 
 export function updateMegaphoneState(newState) {
   currentMegaphoneState = newState;
@@ -38,16 +43,22 @@ function processChatMessage(chatItem, faction, io) {
       .map((item) =>
         item.text
           ? undoModerationFilters(item.text)
-          : `<img class="emoji" src="${item.url}" alt="${item.emojiText}" shared-tooltip-text="${item.alt}" >`
+          : `<img class="emoji" src="${item.url}" alt="${
+              item.emojiText || item.alt
+            }" shared-tooltip-text="${item.alt}" >`,
       )
       .join(""),
     plainMessage: chatItem.message
       .map((item) =>
-        item.text ? undoModerationFilters(item.text) : ` :${item.alt}: `
+        item.text
+          ? undoModerationFilters(item.text)
+          : item.emojiText ||
+            (item.alt.startsWith(":") ? item.alt : `:${item.alt}:`),
       )
       .join(""),
     timestamp: new Date(chatItem.timestamp),
   });
+
   io.emit("chatlog", `${msg.authorName}: ${msg.plainMessage}`);
 
   const currentTime = Date.now();
@@ -64,6 +75,44 @@ function processChatMessage(chatItem, faction, io) {
     return; // Skip duplicate
   }
   messageCache.set(messageKey, currentTime);
+
+  // Handle WhatsApp forwarded messages pattern: "💬Name: Message" or "💬Name 開咪"
+  // Move this BEFORE TTS logic so it doesn't get confused by megaphone icons
+
+  // Pattern 1: Suffix pattern (for single-message TTS) "!gossip Hello !:Edward Li"
+  const suffixMatch = msg.plainMessage.match(/^(.*)\s+!:(.+)$/s);
+  if (suffixMatch) {
+    msg.authorName = `💬${suffixMatch[2].trim()}`;
+    msg.plainMessage = suffixMatch[1].trim();
+    // Clean HTML: Remove the text suffix from the end
+    msg.message = msg.message.replace(/\s*!:[^<]+$/, "").trim();
+  }
+  // Pattern 2: Prefix pattern (for standard messages) "💬Name: Message"
+  else {
+    const whatsappPrefixRegex = /(💬|:?speech_balloon:?)\s*/i;
+    if (whatsappPrefixRegex.test(msg.plainMessage)) {
+      const cleanPlain = msg.plainMessage.replace(whatsappPrefixRegex, "");
+
+      // Pattern 1: "Name: Message"
+      const waMatch = cleanPlain.match(/^(.+?)\s*[:：]\s*(.*)$/s);
+
+      if (waMatch) {
+        msg.authorName = `💬${waMatch[1].trim()}`;
+        msg.plainMessage = waMatch[2].trim();
+        // 1. Remove the leading emoji <img> tag
+        // 2. Remove everything up to the first colon (the Name: part)
+        msg.message = msg.message
+          .replace(
+            /<img[^>]+(alt="💬"|alt=":?speech_balloon:?"|shared-tooltip-text=":?speech_balloon:?")[^>]*>/i,
+            "",
+          )
+          .replace(/^[^:：]*[:：]\s*/, "")
+          .trim();
+      }
+    }
+  }
+
+  // --- TTS & Icon Prefixing ---
 
   let ttsText = null;
   let ttsVoiceID = null;
@@ -119,6 +168,24 @@ function processChatMessage(chatItem, faction, io) {
     ttsVoiceID = "zh-CN-XiaoxiaoNeural";
   }
 
+  // NOW we emit the final version with the icon to the chat box
+  io.emit("message", msg);
+
+  // Guard: Only perform TTS and WhatsApp forwarding for messages sent after the service started
+  if (msg.timestamp) {
+    let msgTime = msg.timestamp.getTime();
+
+    // YouTube internal timestamps are sometimes in microseconds (16 digits).
+    // Convert to milliseconds if detected.
+    if (msgTime > 10000000000000) {
+      msgTime = Math.floor(msgTime / 1000);
+    }
+
+    if (msgTime < serviceStartTime) {
+      return;
+    }
+  }
+
   if (ttsText && currentMegaphoneState.enabled) {
     textToSpeech({
       text: ttsText,
@@ -126,7 +193,6 @@ function processChatMessage(chatItem, faction, io) {
       voiceID: ttsVoiceID,
     });
   }
-  io.emit("message", msg);
 
   const prefix = faction === Faction.FEDERATION ? "🔵" : "🔴";
   const targetGroupId = isPublicStream ? PUBLIC_GROUP_ID : TEST_GROUP_ID;
@@ -178,7 +244,7 @@ export function setupLiveChatForFaction({ broadcastId, faction, io }) {
 async function fetchAndSumViewers({ broadcastIds, io }) {
   try {
     const viewerCounts = await Promise.all(
-      broadcastIds.map((videoId) => getViewerCount(videoId))
+      broadcastIds.map((videoId) => getViewerCount(videoId)),
     );
     const totalViewers = viewerCounts.reduce((sum, count) => sum + count, 0);
     console.log(`Total Viewers: ${totalViewers}`);
@@ -188,11 +254,15 @@ async function fetchAndSumViewers({ broadcastIds, io }) {
   }
 }
 
-export async function startLiveChatAndViewerCount({ broadcastIds, io, isPublic = true }) {
+export async function startLiveChatAndViewerCount({
+  broadcastIds,
+  io,
+  isPublic = true,
+}) {
   isPublicStream = isPublic;
   if (broadcastIds.length !== 2) {
     console.error(
-      "Cannot start live chat and viewer count: Expected 2 broadcast IDs."
+      "Cannot start live chat and viewer count: Expected 2 broadcast IDs.",
     );
     return;
   }
@@ -203,7 +273,7 @@ export async function startLiveChatAndViewerCount({ broadcastIds, io, isPublic =
   while (attempts < maxAttempts) {
     try {
       console.log(
-        `Attempt ${attempts + 1} to set up live chat for Federation and Zeon...`
+        `Attempt ${attempts + 1} to set up live chat for Federation and Zeon...`,
       );
 
       const fedPromise = setupLiveChatForFaction({
@@ -225,7 +295,7 @@ export async function startLiveChatAndViewerCount({ broadcastIds, io, isPublic =
       if (viewerCountInterval) clearInterval(viewerCountInterval);
       viewerCountInterval = setInterval(
         () => fetchAndSumViewers({ broadcastIds, io }),
-        25 * 1000 // every 25 seconds
+        25 * 1000, // every 25 seconds
       );
 
       console.log("Successfully started live chat and viewer count.");

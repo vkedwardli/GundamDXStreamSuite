@@ -16,10 +16,11 @@ export function createMessage({
   message,
   plainMessage,
   timestamp,
-}) {
+} = {}) {
   return {
     isFederation,
     time: getFormattedTime(timestamp),
+    timestamp, // Store the original Date object (can be undefined for system msgs)
     authorName,
     profilePic,
     message,
