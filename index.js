@@ -37,6 +37,8 @@ import {
   connectSpeaker,
   lofiTest,
   getRandomDelay,
+  startOverlay,
+  stopOverlay,
 } from "./systemUtils.js";
 import { createMessage } from "./messageService.js";
 import {
@@ -271,6 +273,7 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
 
   await scheduler.wait(2000); // Short delay before starting OBS stream
   await startOBSStreamingAndRecognition(); // From obsService
+  startOverlay();
 
   console.log(
     `Stream starting process initiated for ${
@@ -338,6 +341,7 @@ async function stopStreaming(io) {
     await stopOBSStreamingAndRecognition(); // From obsService
     stopLiveChatAndViewerCount(); // From chatService
     clearLiveChatCache();
+    stopOverlay();
 
     currentBroadcastIds = []; // Clear current broadcast IDs
     if (io) {

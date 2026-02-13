@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Scoreboard Overlay</title>
+    <meta charset="UTF-8" />
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: transparent; /* Keep body fully transparent */
+        width: 1920px;
+        height: 760px;
+        overflow: hidden;
+        font-family: "a Atmospheric", sans-serif;
+        color: white;
+        -webkit-app-region: no-drag; /* No longer need dragging if it's full width */
+      }
+      .scoreboard-container {
+        position: absolute;
+        bottom: 0;
+        width: 100%;
+        display: flex;
+        align-items: baseline;
+        justify-content: center;
+        gap: 60px; /* Space for the divider */
+        background: rgba(0, 0, 0, 0.5);
+        padding: 10px 0;
+      }
+      .faction-box {
+        display: flex;
+        align-items: baseline;
+        position: relative; /* Anchor for absolute streaks */
+      }
+      .wins {
+        font-size: 84px;
+        font-weight: bold;
+        text-shadow: 4px 4px 8px rgba(0,0,0,0.8);
+        line-height: 1;
+        min-width: 120px;
+        text-align: center;
+      }
+      .streak {
+        position: absolute;
+        display: flex;
+        gap: 4px;
+        align-items: baseline;
+        top: 50%;
+        transform: translateY(-50%);
+        white-space: nowrap;
+      }
+      #fed-streak {
+        right: 100%; /* Grow to the left */
+        margin-right: 40px;
+        flex-direction: row-reverse; /* Keep newest star closest to score */
+      }
+      #zeon-streak {
+        left: 100%; /* Grow to the right */
+        margin-left: 40px;
+      }
+      .streak img {
+        height: 108px;
+        width: auto;
+        margin: 0 -25px; /* Negative horizontal margin to overlap/tighten stars */
+      }
+      .divider {
+        font-size: 48px;
+        font-weight: bold;
+        opacity: 0.8;
+        line-height: 1;
+      }
+      
+      #zeon-wins { color: #ff9999; }
+
+      /* Comment Overlay Styles */
+      #comment-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 1920px;
+        height: 640px; /* Leave space for the scoreboard bar */
+        background: transparent;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        transition: background-color 0.3s ease, opacity 1s ease;
+        opacity: 0;
+        pointer-events: none;
+        z-index: -1; /* Behind scoreboard if they overlap */
+      }
+
+      #comment-text {
+        white-space: nowrap;
+        font-family: "Microsoft JhengHei UI", "Microsoft JhengHei", "Heiti TC", sans-serif; /* Clean bold Chinese-ready font */
+        font-size: 320px; /* Reduced to 50% of 640px height */
+        font-weight: 900;
+        color: white;
+        padding-left: 1920px; /* Start off-screen to the right */
+        display: inline-block;
+      }
+
+      /* TTS "Attention" state: flashing background */
+      .flash-active {
+        animation: flash-bg 0.4s infinite;
+        opacity: 1 !important;
+      }
+      .flash-active #comment-text {
+        color: black !important;
+      }
+
+      @keyframes flash-bg {
+        0%, 100% { background-color: white; }
+        50% { background-color: #666; }
+      }
+
+      /* Normal Comment state: black background, white text */
+      .comment-active {
+        background-color: black !important;
+        opacity: 1 !important;
+      }
+      .comment-active #comment-text {
+        color: white !important;
+      }
+
+      @keyframes marquee {
+        0% { transform: translateX(0); }
+        100% { transform: translateX(calc(-100% - 1920px)); }
+      }
+
+      @keyframes new-star-animation {
+        0% { opacity: 0; transform: scale(0.3) rotate(-180deg); }
+        60% { opacity: 1; transform: scale(1.2) rotate(10deg); }
+        100% { transform: scale(1) rotate(0deg); }
+      }
+      .new-star {
+        animation: new-star-animation 0.5s ease-out forwards;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="comment-overlay">
+      <div id="comment-text"></div>
+    </div>
+    <div class="scoreboard-container">
+      <div class="faction-box">
+        <div id="fed-streak" class="streak"></div>
+        <div id="fed-wins" class="wins">12</div>
+      </div>
+      <div class="divider">VS</div>
+      <div class="faction-box">
+        <div id="zeon-wins" class="wins">34</div>
+        <div id="zeon-streak" class="streak">
+          <img src="./images/star.png" />
+          <img src="./images/star.png" />
+          <img src="./images/star.png" />
+          <img src="./images/star.png" />
+          <img src="./images/star.png" />
+          <img src="./images/star.png" />
+        </div>
+      </div>
+    </div>
+
+    <script src="./socket.io.min.js"></script>
+    <script>
+      const socket = io();
+
+      const fedWinsEl = document.getElementById("fed-wins");
+      const zeonWinsEl = document.getElementById("zeon-wins");
+      const fedStreakEl = document.getElementById("fed-streak");
+      const zeonStreakEl = document.getElementById("zeon-streak");
+      const commentOverlay = document.getElementById("comment-overlay");
+      const commentText = document.getElementById("comment-text");
+
+      socket.on("connect", () => {
+        socket.emit("getInitialGameState");
+      });
+
+      let previousState = {
+        streaks: { federation: 0, zeon: 6 },
+        totalWins: { federation: 12, zeon: 34 },
+      };
+
+      socket.on("battleResult", (data) => {
+        if (data && data.state) {
+          updateScoreboard(data.state);
+          previousState = data.state;
+        }
+      });
+
+      let commentQueue = [];
+      let isDisplayingComment = false;
+      let currentTTSResolver = null;
+
+      socket.on("message", (msg) => {
+        console.log("New message for overlay:", msg);
+        if (msg && msg.plainMessage) {
+          // Extra guard: Ignore messages that are older than 30 seconds (lag or backlog)
+          if (msg.timestamp) {
+            const msgTime = new Date(msg.timestamp).getTime();
+            if (Date.now() - msgTime > 30000) {
+              console.log("Ignoring old message:", msg.plainMessage);
+              return;
+            }
+          }
+          commentQueue.push(msg);
+          processCommentQueue();
+        }
+      });
+
+      socket.on("tts_finished", () => {
+        console.log("TTS Finished event received");
+        if (currentTTSResolver) {
+            currentTTSResolver();
+            currentTTSResolver = null;
+        }
+      });
+
+      async function processCommentQueue() {
+        if (isDisplayingComment || commentQueue.length === 0) return;
+
+        isDisplayingComment = true;
+        const msg = commentQueue.shift();
+        
+        // Include author name
+        const text = `${msg.authorName}: ${msg.plainMessage}`;
+        
+        // Check for TTS icons in plainMessage: 🔊 (Say), 💁 (Gossip), 🎤 (Anchor)
+        const isTTS = /[🔊💁🎤]/.test(msg.plainMessage);
+
+        await displayComment(text, isTTS);
+      }
+
+      async function displayComment(text, isTTS) {
+        commentText.textContent = text;
+        commentText.style.animation = "none";
+        commentOverlay.style.opacity = "0"; 
+        commentText.offsetHeight; // trigger reflow
+
+        if (isTTS) {
+          // 1. Start Flashing (Attention)
+          commentOverlay.className = "flash-active";
+          commentOverlay.style.opacity = "1";
+          
+          // 2. Wait for TTS to finish (via socket event)
+          await Promise.race([
+            new Promise(resolve => { currentTTSResolver = resolve; }),
+            new Promise(resolve => setTimeout(resolve, 10000)) // Safety timeout
+          ]);
+
+          // 3. Stop flashing and start marquee
+          commentOverlay.className = "comment-active";
+          startMarquee();
+        } else {
+          // Normal comment: milder hint (black background)
+          commentOverlay.className = "comment-active";
+          commentOverlay.style.opacity = "1";
+          startMarquee();
+        }
+      }
+
+      function startMarquee() {
+        // One loop is 12s. We want it to loop twice, so we wait 24s.
+        commentText.style.animation = "marquee 12s linear infinite";
+        
+        setTimeout(() => {
+          commentOverlay.style.opacity = "0";
+          setTimeout(() => {
+            commentOverlay.className = "";
+            commentText.style.animation = "none";
+            commentText.textContent = "";
+            isDisplayingComment = false;
+            processCommentQueue(); // Immediately check for next
+          }, 500); // Shorter fade
+        }, 24000); // 24 seconds = 2 loops of 12s
+      }
+
+      function updateScoreboard(state) {
+        fedWinsEl.textContent = state.totalWins.federation || 0;
+        zeonWinsEl.textContent = state.totalWins.zeon || 0;
+
+        updateStreak(fedStreakEl, previousState.streaks.federation, state.streaks.federation, true);
+        updateStreak(zeonStreakEl, previousState.streaks.zeon, state.streaks.zeon, false);
+      }
+
+      function updateStreak(container, prevCount, newCount, isFederation) {
+        if (newCount > prevCount) {
+          const newStar = document.createElement("img");
+          newStar.src = "./images/star.png";
+          newStar.classList.add("new-star");
+          if (isFederation) {
+            container.insertBefore(newStar, container.firstChild);
+          } else {
+            container.appendChild(newStar);
+          }
+        } else if (newCount < prevCount || newCount === 0) {
+          container.innerHTML = "";
+          for (let i = 0; i < newCount; i++) {
+            const star = document.createElement("img");
+            star.src = "./images/star.png";
+            container.appendChild(star);
+          }
+        }
+      }
+    </script>
+  </body>
+</html>

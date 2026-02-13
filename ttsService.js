@@ -7,6 +7,7 @@ import axios from "axios";
 import sound from "sound-play";
 import Bottleneck from "bottleneck";
 import { randomUUID } from "crypto";
+import { io } from "./serverSetup.js";
 import { TTSModel, MINIMAX_GROUP_ID, MINIMAX_API_KEY } from "./config.js";
 
 const execPromise = promisify(exec);
@@ -70,6 +71,7 @@ async function processTTSQueue() {
         `edge-playback --rate=-30% --volume=+100% --voice "${voiceID}" --text "${text}"`,
       );
       console.log("Azure AI Speech playback completed");
+      if (io) io.emit("tts_finished");
     } else {
       // MiniMaxAI TTS
       const response = await rateLimitedPost(
@@ -119,6 +121,7 @@ async function processTTSQueue() {
           // Play the MP3 file
           await sound.play(tempFilePath, 1.0);
           console.log("MiniMax AI Speech playback completed");
+          if (io) io.emit("tts_finished");
 
           // Clean up the temporary file
           setTimeout(() => {

@@ -180,3 +180,40 @@ export function lofiTest(io) {
     );
   }
 }
+
+let overlayProcess = null;
+export function startOverlay() {
+  if (overlayProcess) return; // Already running
+
+  console.log("Starting scoreboard overlay...");
+  const isWin = os.platform() === "win32";
+  const electronCommand = isWin ? "npx.cmd" : "npx";
+  
+  overlayProcess = spawn(electronCommand, ["electron", "overlay.js"], {
+    detached: false,
+    stdio: "ignore",
+    shell: isWin, // Required for .cmd files on Windows to prevent EINVAL
+  });
+
+  overlayProcess.on("error", (err) => {
+    console.error(`Error starting overlay: ${err.message}`);
+    overlayProcess = null;
+  });
+
+  overlayProcess.on("close", (code) => {
+    console.log(`Overlay process exited with code ${code}`);
+    overlayProcess = null;
+  });
+}
+
+export function stopOverlay() {
+  if (!overlayProcess) return;
+
+  console.log("Stopping scoreboard overlay...");
+  if (os.platform() === "win32") {
+    exec(`taskkill /pid ${overlayProcess.pid} /f /t`);
+  } else {
+    overlayProcess.kill();
+  }
+  overlayProcess = null;
+}
