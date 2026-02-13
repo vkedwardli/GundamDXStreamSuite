@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
   <head>
     <title>Scoreboard Overlay</title>
@@ -19,12 +19,14 @@
         position: absolute;
         bottom: 0;
         width: 100%;
+        height: 120px;
         display: flex;
         align-items: baseline;
         justify-content: center;
         gap: 60px; /* Space for the divider */
         background: rgba(0, 0, 0, 0.5);
-        padding: 10px 0;
+        padding: 18px 0;
+        box-sizing: border-box;
       }
       .faction-box {
         display: flex;
@@ -34,7 +36,7 @@
       .wins {
         font-size: 84px;
         font-weight: bold;
-        text-shadow: 4px 4px 8px rgba(0,0,0,0.8);
+        text-shadow: 4px 4px 8px rgba(0, 0, 0, 0.8);
         line-height: 1;
         min-width: 120px;
         text-align: center;
@@ -68,8 +70,10 @@
         opacity: 0.8;
         line-height: 1;
       }
-      
-      #zeon-wins { color: #ff9999; }
+
+      #zeon-wins {
+        color: #ff9999;
+      }
 
       /* Comment Overlay Styles */
       #comment-overlay {
@@ -82,54 +86,96 @@
         overflow: hidden;
         display: flex;
         align-items: center;
-        transition: background-color 0.3s ease, opacity 1s ease;
+        transition: opacity 1s ease;
         opacity: 0;
         pointer-events: none;
         z-index: -1; /* Behind scoreboard if they overlap */
       }
 
+      #comment-bg-image {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: url("./images/overlaybackground.jpg") no-repeat center;
+        background-size: cover;
+        opacity: 0;
+        transition: opacity 1s ease;
+        z-index: 1;
+      }
+
+      #comment-flash-layer {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        z-index: 2;
+      }
+
       #comment-text {
+        position: relative;
         white-space: nowrap;
-        font-family: "Microsoft JhengHei UI", "Microsoft JhengHei", "Heiti TC", sans-serif; /* Clean bold Chinese-ready font */
+        font-family:
+          "Microsoft JhengHei UI", "Microsoft JhengHei", "Heiti TC", sans-serif; /* Clean bold Chinese-ready font */
         font-size: 320px; /* Reduced to 50% of 640px height */
         font-weight: 900;
         color: white;
-        padding-left: 1920px; /* Start off-screen to the right */
+        padding-left: 0;
         display: inline-block;
+        z-index: 3;
+        margin-top: -40px;
       }
 
       /* TTS "Attention" state: flashing background */
-      .flash-active {
+      .flash-active #comment-flash-layer {
         animation: flash-bg 0.4s infinite;
-        opacity: 1 !important;
       }
       .flash-active #comment-text {
         color: black !important;
       }
 
       @keyframes flash-bg {
-        0%, 100% { background-color: white; }
-        50% { background-color: #666; }
+        0%,
+        100% {
+          background-color: white;
+        }
+        50% {
+          background-color: #666;
+        }
       }
 
-      /* Normal Comment state: black background, white text */
-      .comment-active {
-        background-color: black !important;
-        opacity: 1 !important;
+      /* Normal Comment state: visible image background */
+      .comment-active #comment-bg-image {
+        opacity: 1;
       }
       .comment-active #comment-text {
         color: white !important;
       }
 
       @keyframes marquee {
-        0% { transform: translateX(0); }
-        100% { transform: translateX(calc(-100% - 1920px)); }
+        0% {
+          transform: translateX(1920px);
+        }
+        100% {
+          transform: translateX(-100%);
+        }
       }
 
       @keyframes new-star-animation {
-        0% { opacity: 0; transform: scale(0.3) rotate(-180deg); }
-        60% { opacity: 1; transform: scale(1.2) rotate(10deg); }
-        100% { transform: scale(1) rotate(0deg); }
+        0% {
+          opacity: 0;
+          transform: scale(0.3) rotate(-180deg);
+        }
+        60% {
+          opacity: 1;
+          transform: scale(1.2) rotate(10deg);
+        }
+        100% {
+          transform: scale(1) rotate(0deg);
+        }
       }
       .new-star {
         animation: new-star-animation 0.5s ease-out forwards;
@@ -138,6 +184,8 @@
   </head>
   <body>
     <div id="comment-overlay">
+      <div id="comment-bg-image"></div>
+      <div id="comment-flash-layer"></div>
       <div id="comment-text"></div>
     </div>
     <div class="scoreboard-container">
@@ -209,8 +257,8 @@
       socket.on("tts_finished", () => {
         console.log("TTS Finished event received");
         if (currentTTSResolver) {
-            currentTTSResolver();
-            currentTTSResolver = null;
+          currentTTSResolver();
+          currentTTSResolver = null;
         }
       });
 
@@ -219,10 +267,10 @@
 
         isDisplayingComment = true;
         const msg = commentQueue.shift();
-        
+
         // Include author name
         const text = `${msg.authorName}: ${msg.plainMessage}`;
-        
+
         // Check for TTS icons in plainMessage: 🔊 (Say), 💁 (Gossip), 🎤 (Anchor)
         const isTTS = /[🔊💁🎤]/.test(msg.plainMessage);
 
@@ -230,37 +278,53 @@
       }
 
       async function displayComment(text, isTTS) {
-        commentText.textContent = text;
         commentText.style.animation = "none";
-        commentOverlay.style.opacity = "0"; 
+        commentOverlay.style.opacity = "0";
+        commentText.textContent = ""; // Clear text initially
         commentText.offsetHeight; // trigger reflow
 
         if (isTTS) {
           // 1. Start Flashing (Attention)
           commentOverlay.className = "flash-active";
           commentOverlay.style.opacity = "1";
-          
+
           // 2. Wait for TTS to finish (via socket event)
           await Promise.race([
-            new Promise(resolve => { currentTTSResolver = resolve; }),
-            new Promise(resolve => setTimeout(resolve, 10000)) // Safety timeout
+            new Promise((resolve) => {
+              currentTTSResolver = resolve;
+            }),
+            new Promise((resolve) => setTimeout(resolve, 10000)), // Safety timeout
           ]);
 
-          // 3. Stop flashing and start marquee
+          // 3. Populate text and start marquee
+          const gap = "\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0";
+          commentText.textContent = (text + gap).repeat(4).trimEnd();
           commentOverlay.className = "comment-active";
           startMarquee();
         } else {
-          // Normal comment: milder hint (black background)
+          // Normal comment
+          const gap = "\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0";
+          commentText.textContent = (text + gap).repeat(4).trimEnd();
           commentOverlay.className = "comment-active";
           commentOverlay.style.opacity = "1";
           startMarquee();
         }
       }
-
       function startMarquee() {
-        // One loop is 12s. We want it to loop twice, so we wait 24s.
-        commentText.style.animation = "marquee 12s linear infinite";
-        
+        // Calculate dynamic duration based on text length to keep speed constant
+        const containerWidth = 1920;
+        const textWidth = commentText.offsetWidth;
+        const scrollDistance = containerWidth + textWidth;
+        const pixelsPerSecond = 1200; // Adjust this value to change the constant speed
+        const duration = scrollDistance / pixelsPerSecond;
+
+        // Run exactly 1 time (since the content is already repeated 4 times)
+        // Use forwards to keep it off-screen during the fade out
+        commentText.style.animation = `marquee ${duration}s linear 1 forwards`;
+
+        // Total time for the full scroll + small buffer to ensure fade-out starts
+        const totalTime = duration * 1000;
+
         setTimeout(() => {
           commentOverlay.style.opacity = "0";
           setTimeout(() => {
@@ -269,16 +333,25 @@
             commentText.textContent = "";
             isDisplayingComment = false;
             processCommentQueue(); // Immediately check for next
-          }, 500); // Shorter fade
-        }, 24000); // 24 seconds = 2 loops of 12s
+          }, 1100); // Buffer slightly longer than CSS transition (1s)
+        }, totalTime + 200);
       }
-
       function updateScoreboard(state) {
         fedWinsEl.textContent = state.totalWins.federation || 0;
         zeonWinsEl.textContent = state.totalWins.zeon || 0;
 
-        updateStreak(fedStreakEl, previousState.streaks.federation, state.streaks.federation, true);
-        updateStreak(zeonStreakEl, previousState.streaks.zeon, state.streaks.zeon, false);
+        updateStreak(
+          fedStreakEl,
+          previousState.streaks.federation,
+          state.streaks.federation,
+          true,
+        );
+        updateStreak(
+          zeonStreakEl,
+          previousState.streaks.zeon,
+          state.streaks.zeon,
+          false,
+        );
       }
 
       function updateStreak(container, prevCount, newCount, isFederation) {
@@ -300,6 +373,18 @@
           }
         }
       }
+
+      /* Test trigger: verifies the design 1s after load
+      setTimeout(() => {
+        console.log("Triggering test comment for design verification...");
+        const testMsg = {
+          authorName: "Edward Li",
+          plainMessage: "側経意責家方家閉討店暖育田庁載",
+          timestamp: new Date().toISOString(),
+        };
+        commentQueue.push(testMsg);
+        processCommentQueue();
+      }, 1000); */
     </script>
   </body>
 </html>

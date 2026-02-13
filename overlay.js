@@ -31,6 +31,9 @@ function createWindow() {
   // Load the popout scoreboard from the local server
   win.loadURL('http://localhost:3000/popout.html');
 
+  // Make the window click-through
+  win.setIgnoreMouseEvents(true);
+
   // Set icon for macOS Dock explicitly
   if (process.platform === 'darwin') {
     app.dock.setIcon(iconPath);
