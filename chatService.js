@@ -82,8 +82,8 @@ function processChatMessage(chatItem, faction, io) {
     msg.plainMessage.startsWith("！msay ")
   ) {
     ttsText = msg.plainMessage.slice(6);
-    msg.message = `${currentMegaphoneState.icon} ` + msg.message.slice(6);
-    msg.plainMessage = `${currentMegaphoneState.icon} ` + ttsText;
+    msg.message = `🇨🇳${currentMegaphoneState.icon} ` + msg.message.slice(6);
+    msg.plainMessage = `🇨🇳${currentMegaphoneState.icon} ` + ttsText;
     ttsVoiceID = "zh-CN-YunjianNeural";
   } else if (
     msg.plainMessage.startsWith("!gossip ") ||
@@ -98,8 +98,8 @@ function processChatMessage(chatItem, faction, io) {
     msg.plainMessage.startsWith("！mgossip ")
   ) {
     ttsText = msg.plainMessage.slice(9);
-    msg.message = `${currentMegaphoneState.gossip} ` + msg.message.slice(9);
-    msg.plainMessage = `${currentMegaphoneState.gossip} ` + ttsText;
+    msg.message = `🇨🇳${currentMegaphoneState.gossip} ` + msg.message.slice(9);
+    msg.plainMessage = `🇨🇳${currentMegaphoneState.gossip} ` + ttsText;
     ttsVoiceID = "zh-CN-XiaoyiNeural";
   } else if (
     msg.plainMessage.startsWith("!anchor ") ||
@@ -114,8 +114,8 @@ function processChatMessage(chatItem, faction, io) {
     msg.plainMessage.startsWith("！manchor ")
   ) {
     ttsText = msg.plainMessage.slice(9);
-    msg.message = `${currentMegaphoneState.anchor} ` + msg.message.slice(9);
-    msg.plainMessage = `${currentMegaphoneState.anchor} ` + ttsText;
+    msg.message = `🇨🇳${currentMegaphoneState.anchor} ` + msg.message.slice(9);
+    msg.plainMessage = `🇨🇳${currentMegaphoneState.anchor} ` + ttsText;
     ttsVoiceID = "zh-CN-XiaoxiaoNeural";
   }
 
