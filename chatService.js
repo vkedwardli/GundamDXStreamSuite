@@ -62,18 +62,27 @@ function processChatMessage(chatItem, faction, io) {
   io.emit("chatlog", `${msg.authorName}: ${msg.plainMessage}`);
 
   const currentTime = Date.now();
-  const messageKey = msg.plainMessage;
+  // Composite key: Author + Message + Original YouTube Timestamp
+  // This uniquely identifies this specific message instance from the API.
+  const messageKey = `${msg.authorName}:${msg.plainMessage}:${
+    msg.timestamp ? msg.timestamp.getTime() : ""
+  }`;
 
+  if (messageCache.has(messageKey)) {
+    // Refresh the cache timer: as long as the API repeats this specific message,
+    // it stays in the cache and remains blocked.
+    messageCache.set(messageKey, currentTime);
+    return; // Skip duplicate
+  }
+
+  // Cleanup old entries (older than 5 minutes)
   for (const [key, timestamp] of messageCache) {
-    if (currentTime - timestamp > 2000) {
-      // 2 second cache
+    if (currentTime - timestamp > 300000) {
       messageCache.delete(key);
     }
   }
 
-  if (messageCache.has(messageKey)) {
-    return; // Skip duplicate
-  }
+  // Set the initial cache entry
   messageCache.set(messageKey, currentTime);
 
   // Handle WhatsApp forwarded messages pattern: "💬Name: Message" or "💬Name 開咪"
