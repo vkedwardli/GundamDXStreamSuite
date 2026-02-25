@@ -93,8 +93,7 @@ function processChatMessage(chatItem, faction, io) {
   if (suffixMatch) {
     msg.authorName = `💬${suffixMatch[2].trim()}`;
     msg.plainMessage = suffixMatch[1].trim();
-    // Clean HTML: Remove the text suffix from the end
-    msg.message = msg.message.replace(/\s*!:[^<]+$/, "").trim();
+    msg.message = msg.plainMessage; // Use plain text to avoid HTML emoji/tag mess
   }
   // Pattern 2: Prefix pattern (for standard messages) "💬Name: Message"
   else {
@@ -108,15 +107,7 @@ function processChatMessage(chatItem, faction, io) {
       if (waMatch) {
         msg.authorName = `💬${waMatch[1].trim()}`;
         msg.plainMessage = waMatch[2].trim();
-        // 1. Remove the leading emoji <img> tag
-        // 2. Remove everything up to the first colon (the Name: part)
-        msg.message = msg.message
-          .replace(
-            /<img[^>]+(alt="💬"|alt=":?speech_balloon:?"|shared-tooltip-text=":?speech_balloon:?")[^>]*>/i,
-            "",
-          )
-          .replace(/^[^:：]*[:：]\s*/, "")
-          .trim();
+        msg.message = msg.plainMessage; // Use plain text to avoid HTML emoji/tag mess
       }
     }
   }
