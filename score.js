@@ -7,7 +7,7 @@ import { io } from "./serverSetup.js";
 import { scheduler } from "timers/promises";
 import { textToSpeech } from "./ttsService.js";
 import { TTSModel, Faction } from "./config.js";
-import { enableCam } from "./obsService.js";
+import { enableCam, showZDXPopup } from "./obsService.js";
 import { createMessage, getFormattedTime } from "./messageService.js";
 
 const recentlyDisabledCams = new Map();
@@ -160,6 +160,7 @@ const gameState = {
   lastWinner: null, // Faction object
   lastOutcomeTime: 0, // Timestamp of the last processed win/draw
   lastBattleAnnouncement: 0,
+  lastZDXAnnouncement: 0,
 };
 
 // --- Battle Detection Buffering ---
@@ -260,6 +261,17 @@ const announceTuesdaySpecial = () => {
       message: text,
     });
     io.emit("message", msg);
+  }
+};
+
+const triggerZDXPopup = () => {
+  if (
+    gameState.totalBattles > 0 &&
+    (gameState.totalBattles - 6) % 10 === 0 &&
+    gameState.lastZDXAnnouncement !== gameState.totalBattles
+  ) {
+    gameState.lastZDXAnnouncement = gameState.totalBattles;
+    showZDXPopup();
   }
 };
 
@@ -378,6 +390,9 @@ const processBattleOutcome = () => {
 
   // --- 6. Check for Tuesday special announcement ---
   announceTuesdaySpecial();
+
+  // --- 7. Check for ZDX Popup ---
+  triggerZDXPopup();
 };
 
 async function startRecognizeBattleResults() {

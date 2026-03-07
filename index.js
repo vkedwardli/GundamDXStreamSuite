@@ -25,6 +25,7 @@ import {
   closeOBS,
   toggleCam,
   getAllCamsStatus,
+  hideZDXPopup,
 } from "./obsService.js";
 import {
   startLiveChatAndViewerCount,
@@ -272,6 +273,7 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
   currentBroadcastIds = [...broadcastIds]; // Store current IDs
 
   await scheduler.wait(2000); // Short delay before starting OBS stream
+  await hideZDXPopup();
   await startOBSStreamingAndRecognition(); // From obsService
   startOverlay();
 

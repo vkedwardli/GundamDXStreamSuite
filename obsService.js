@@ -212,6 +212,46 @@ export async function closeOBS() {
   }
 }
 
+export async function hideZDXPopup() {
+  try {
+    if (!obs.identified) return;
+    await obs.call("SetSourceFilterEnabled", {
+      sourceName: "ZDX",
+      filterName: "Hide",
+      filterEnabled: true,
+    });
+  } catch (error) {
+    console.error("Error in hideZDXPopup:", error);
+  }
+}
+
+export async function showZDXPopup() {
+  try {
+    if (!obs.identified) {
+      await obsConnect();
+    }
+
+    console.log("Triggering ZDX Show popup...");
+    await obs.call("SetSourceFilterEnabled", {
+      sourceName: "ZDX",
+      filterName: "Show",
+      filterEnabled: true,
+    });
+
+    // Wait for 5 seconds as requested
+    await scheduler.wait(8000);
+
+    console.log("Triggering ZDX Hide popup...");
+    await obs.call("SetSourceFilterEnabled", {
+      sourceName: "ZDX",
+      filterName: "Hide",
+      filterEnabled: true,
+    });
+  } catch (error) {
+    console.error("Error in showZDXPopup:", error);
+  }
+}
+
 const cameraMapping = {
   "federation-left": {
     Scene: 13,
