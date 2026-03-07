@@ -66,7 +66,7 @@ export async function startOBSStreamingAndRecognition() {
       // console.error("Error cleaning up virtual cam:", cleanupError);
     }
     await stopRecognizeBattleResults().catch((e) =>
-      console.error("Error stopping recognition after start error:", e)
+      console.error("Error stopping recognition after start error:", e),
     );
   }
 }
@@ -97,7 +97,7 @@ export async function launchOBS() {
         resolve(true);
       } else {
         console.log(
-          "OBS Studio is not running or not connected, attempting to start and connect..."
+          "OBS Studio is not running or not connected, attempting to start and connect...",
         );
         try {
           exec(
@@ -109,7 +109,7 @@ export async function launchOBS() {
                 // No reject here, as we'll try to connect anyway
               }
               // Don't wait for OBS to fully load, just proceed to connect attempt
-            }
+            },
           );
 
           // Reset capture card DirectShow settings (fire and forget)
@@ -120,21 +120,21 @@ export async function launchOBS() {
               (error, stdout, stderr) => {
                 if (error)
                   console.error(
-                    `Error setting camera config: ${error.message}`
+                    `Error setting camera config: ${error.message}`,
                   );
                 else if (stderr)
                   console.error(`Camera config stderr: ${stderr}`);
                 else console.log("Capture card config set attempt finished.");
-              }
+              },
             );
           } else {
             console.log(
-              "Skipping WebCameraConfig.exe execution: Not on Windows."
+              "Skipping WebCameraConfig.exe execution: Not on Windows.",
             );
           }
 
           console.log(
-            "Waiting 10 seconds before attempting to connect to OBS WebSocket..."
+            "Waiting 10 seconds before attempting to connect to OBS WebSocket...",
           );
           await scheduler.wait(10000);
 
@@ -150,7 +150,7 @@ export async function launchOBS() {
         } catch (launchError) {
           console.error(
             "Critical error during OBS launch process:",
-            launchError
+            launchError,
           );
           resolve(false);
         }
