@@ -32,7 +32,11 @@ import {
   stopLiveChatAndViewerCount,
   updateMegaphoneState,
 } from "./chatService.js";
-import { setupServer, io as socketIoInstance } from "./serverSetup.js"; // Import io
+import {
+  setupServer,
+  io as socketIoInstance,
+  internalEvents,
+} from "./serverSetup.js"; // Import io and internalEvents
 import {
   startDXOPScreen,
   connectSpeaker,
@@ -152,7 +156,28 @@ function handleClientConnection(client, io) {
     const statuses = await getAllCamsStatus();
     client.emit("allCamStatuses", statuses);
   });
+
+  client.on("sendYouTubeMessage", async (message) => {
+    await sendToFederationLiveChat(message);
+  });
 }
+
+/**
+ * Helper to send a message specifically to the active Federation YouTube stream.
+ * Since the Live ChatBox overlay syncs and displays comments from both Federation
+ * and Zeon streams, sending to the Federation side is sufficient for all viewers to see.
+ */
+async function sendToFederationLiveChat(message) {
+  if (currentBroadcastIds.length > 0) {
+    console.log(`Sending to Federation YouTube stream: ${message}`);
+    await sendLiveChatMessage(currentBroadcastIds[0], message);
+  }
+}
+
+// Subscribe index.js to internal events
+internalEvents.on("sendYouTubeMessage", async (message) => {
+  await sendToFederationLiveChat(message);
+});
 
 // --- Main Streaming Logic ---
 async function startStreaming({ isPublic, retryCount = 0, io }) {
@@ -274,7 +299,33 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
 
   await scheduler.wait(2000); // Short delay before starting OBS stream
   await hideZDXPopup();
-  await startOBSStreamingAndRecognition(); // From obsService
+
+  // Define what happens if the system detects 10 minutes of total inactivity.
+  // This is passed as a callback to the OCR monitoring system.
+  const handleIdleShutdown = async () => {
+    console.log("Idle shutdown triggered via OCR logic.");
+    const idleCloseMessage = "機台閒置時間過長，直播即將關閉，多謝收睇。";
+
+    // 1. Final YouTube Comment
+    await sendToFederationLiveChat(idleCloseMessage);
+
+    // 2. Final TTS Announcement (Public only)
+    if (isPublic) {
+      await textToSpeech({
+        text: idleCloseMessage,
+        model: TTSModel.AZURE_AI,
+        voiceID: "zh-HK-HiuMaanNeural",
+      });
+    }
+
+    // 3. Grace period for sound to finish and YouTube chat to sync (approx 5s)
+    await scheduler.wait(5000);
+
+    // 4. Perform full cleanup and stop streaming
+    await stopStreaming(io);
+  };
+
+  await startOBSStreamingAndRecognition(handleIdleShutdown, isPublic); // From obsService
   startOverlay();
 
   console.log(
@@ -315,23 +366,18 @@ async function stopStreaming(io) {
         "Late night stop detected. Playing and sending announcement.",
       );
 
-      // Send message to local chat display
-      const msg = createMessage({
-        authorName: "收皮",
-        profilePic: "images/star.png",
-        message: farewellMessage,
-      });
-      if (io) io.emit("message", msg);
+      // 1. Final YouTube Comment
+      await sendToFederationLiveChat(farewellMessage);
 
-      // Play the announcement via TTS
+      // 2. Play the announcement via TTS
       await textToSpeech({
         text: farewellMessage,
         model: TTSModel.AZURE_AI,
         voiceID: "zh-HK-HiuMaanNeural",
       });
 
-      // Adding a small delay to ensure the sound finishes playing before OBS is killed.
-      await scheduler.wait(2000);
+      // 3. Adding a delay to ensure the sound finishes and YouTube chat syncs (approx 5s)
+      await scheduler.wait(5000);
     }
 
     blockStartStreamingUntil = Date.now() + 60 * 1000; // Block for 60 seconds

@@ -44,7 +44,7 @@ export async function IsLiveStreaming() {
   }
 }
 
-export async function startOBSStreamingAndRecognition() {
+export async function startOBSStreamingAndRecognition(onIdleShutdown, isPublic) {
   try {
     if (!(await IsLiveStreaming())) {
       await obs.call("StartStream");
@@ -55,7 +55,7 @@ export async function startOBSStreamingAndRecognition() {
       console.log("OBS is streaming already, re-initiating recognition...");
     }
     // Always start recognition; it's a local process needed for both new and resumed streams.
-    await startRecognizeBattleResults();
+    await startRecognizeBattleResults(onIdleShutdown, isPublic);
   } catch (error) {
     console.error("Error starting OBS stream/recognition:", error);
     // Potentially try to stop virtual cam if stream start failed but cam started

@@ -6,9 +6,11 @@ import { Server } from "socket.io";
 import { oAuth2Client } from "./youtubeService.js";
 import { TOKEN_PATH as YOUTUBE_TOKEN_PATH } from "./config.js";
 
+import { EventEmitter } from "events";
 const __dirname = import.meta.dirname;
 
 export let io; // Export io to be used in other modules if needed
+export const internalEvents = new EventEmitter();
 
 export function setupServer(onClientConnected) {
   const server = http.createServer(async (req, res) => {

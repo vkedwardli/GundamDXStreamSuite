@@ -3,7 +3,7 @@ import { PassThrough } from "stream";
 import { spawn } from "child_process";
 import fs from "fs";
 import os from "os";
-import { io } from "./serverSetup.js";
+import { io, internalEvents } from "./serverSetup.js";
 import { scheduler } from "timers/promises";
 import { textToSpeech } from "./ttsService.js";
 import { TTSModel, Faction } from "./config.js";
@@ -18,18 +18,32 @@ const markCameraAsDisabled = (cameraName) => {
   console.log(
     `${getFormattedTime()}: Manually disabling ${cameraName}, locking for ${
       MANUAL_DISABLE_LOCKOUT_MS / 1000
-    }s.`
+    }s.`,
   );
   recentlyDisabledCams.set(cameraName, Date.now());
 };
 
-// Define the four regions in the stacked image (562x105 each)
+// Define the regions in the stacked image
+// All areas are scaled to 562px width for FFmpeg vstack.
+// Areas 1-4: Game Over (562x105)
+// Areas 5-6: Banpresto Large (scaled from 585x104 to 562x100)
+// Areas 7-8: Banpresto Small (scaled from 249x47 to 562x106)
 const targetAreas = [
   { y: 0, height: 105, name: "Area1" },
   { y: 105, height: 105, name: "Area2" },
   { y: 210, height: 105, name: "Area3" },
   { y: 315, height: 105, name: "Area4" },
+  { y: 420, height: 100, name: "IdleArea1" },
+  { y: 520, height: 100, name: "IdleArea2" },
+  { y: 620, height: 106, name: "IdleArea3" },
+  { y: 726, height: 106, name: "IdleArea4" },
 ];
+
+/* 
+  BANPRESTO COORDINATES (Save for later):
+  - Area 5-6: w=585:h=104:x=180:y=233 (scaled to 562x100)
+  - Area 7-8: w=249:h=47:x=630:y=843 (scaled to 562x106)
+*/
 
 // Function to capture the stacked image
 async function captureStackedImage() {
@@ -49,7 +63,7 @@ async function captureStackedImage() {
       }
     });
     stream.on("error", (err) =>
-      reject(new Error(`Stream error: ${err.message}`))
+      reject(new Error(`Stream error: ${err.message}`)),
     );
 
     const ffmpegArgs = [
@@ -60,16 +74,26 @@ async function captureStackedImage() {
       os.platform() === "darwin" ? "avfoundation" : "dshow",
       "-pixel_format",
       os.platform() === "darwin" ? "uyvy422" : "nv12",
+      "-video_size",
+      "1920x1080",
       "-i",
       os.platform() === "darwin"
         ? "OBS Virtual Camera"
         : "video=OBS Virtual Camera",
       "-filter_complex",
-      "[0:v]scale=w=1920:h=1080,format=gray[scaled];[scaled]crop=w=562:h=105:x=195:y=307[crop1];[scaled]crop=w=562:h=105:x=1158:y=307[crop2];[scaled]crop=w=240:h=50:x=637:y=874[crop3a];[crop3a]scale=w=562:h=105[crop3];[scaled]crop=w=240:h=50:x=1039:y=874[crop4a];[crop4a]scale=w=562:h=105[crop4];[crop1][crop2][crop3][crop4]vstack=inputs=4[out]",
-      //"[0:v]scale=w=1920:h=1080,format=gray[scaled];[scaled]crop=w=102:h=40:x=113:y=196[crop1];[scaled]crop=w=102:h=40:x=1081:y=196[crop2];[scaled]crop=w=43:h=18:x=839:y=831[crop3a];[crop3a]scale=w=102:h=40[crop3];[scaled]crop=w=43:h=18:x=1240:y=831[crop4a];[crop4a]scale=w=102:h=40[crop4];[crop1][crop2][crop3][crop4]vstack=inputs=4[out]",
+      "[0:v]scale=w=1920:h=1080,format=gray[scaled];" +
+        "[scaled]crop=w=562:h=105:x=195:y=307[crop1];" +
+        "[scaled]crop=w=562:h=105:x=1158:y=307[crop2];" +
+        "[scaled]crop=w=240:h=50:x=637:y=874[crop3a];[crop3a]scale=w=562:h=105[crop3];" +
+        "[scaled]crop=w=240:h=50:x=1039:y=874[crop4a];[crop4a]scale=w=562:h=105[crop4];" +
+        "[scaled]crop=w=585:h=104:x=180:y=233[crop5a];[crop5a]scale=w=562:h=100[crop5];" +
+        "[scaled]crop=w=585:h=104:x=1149:y=233[crop6a];[crop6a]scale=w=562:h=100[crop6];" +
+        "[scaled]crop=w=249:h=47:x=630:y=843[crop7a];[crop7a]scale=w=562:h=106[crop7];" +
+        "[scaled]crop=w=249:h=47:x=1035:y=843[crop8a];[crop8a]scale=w=562:h=106[crop8];" +
+        "[crop1][crop2][crop3][crop4][crop5][crop6][crop7][crop8]vstack=inputs=8[out]",
       "-map",
       "[out]",
-      "-vframes",
+      "-frames:v",
       "1",
       "-f",
       "image2pipe",
@@ -93,7 +117,7 @@ async function captureStackedImage() {
       // console.error(`FFmpeg stderr: ${data}`);
     });
     ffmpeg.on("error", (err) =>
-      reject(new Error(`FFmpeg spawn error: ${err.message}`))
+      reject(new Error(`FFmpeg spawn error: ${err.message}`)),
     );
     ffmpeg.on("close", (code) => {
       // console.log(`FFmpeg process exited with code ${code}`);
@@ -106,6 +130,7 @@ async function captureStackedImage() {
 
 // Function to process a single region of the stacked image
 async function processRegion(buffer, area, worker) {
+  if (!worker) return { area: area.name, text: "" };
   try {
     const {
       data: { text, confidence },
@@ -126,7 +151,7 @@ async function processFrame() {
 
     // Process regions
     const results = await Promise.all(
-      targetAreas.map((area) => processRegion(buffer, area, worker))
+      targetAreas.map((area) => processRegion(buffer, area, worker)),
     );
 
     return results;
@@ -161,7 +186,16 @@ const gameState = {
   lastOutcomeTime: 0, // Timestamp of the last processed win/draw
   lastBattleAnnouncement: 0,
   lastZDXAnnouncement: 0,
+  idleAreaStats: {
+    IdleArea1: { lastSeen: 0, idleStart: 0, lastEventTime: 0 },
+    IdleArea2: { lastSeen: 0, idleStart: 0, lastEventTime: 0 },
+    IdleArea3: { lastSeen: 0, idleStart: 0, lastEventTime: 0 },
+    IdleArea4: { lastSeen: 0, idleStart: 0, lastEventTime: 0 },
+  },
+  lastIdleWarningTime: 0,
 };
+
+let idleShutdownCallback = null;
 
 // --- Battle Detection Buffering ---
 let detectionBuffer = new Set();
@@ -181,7 +215,9 @@ const superStreakMessage = "數唔到喇，打L死人咩";
 
 // Broadcasts the current game state to the client via a prefixed console log
 const broadcastGameState = () => {
-  io.emit("battleResult", { state: gameState });
+  if (io) {
+    io.emit("battleResult", { state: gameState });
+  }
 };
 
 // Prints the overall battle statistics with the win ratio as a percentage.
@@ -203,7 +239,7 @@ const logBattleSummary = () => {
 
     // Format the string to one decimal place for readability.
     ratioString = `Federation: ${fedWinPercentage.toFixed(
-      1
+      1,
     )}% | Zeon: ${zeonWinPercentage.toFixed(1)}%`;
   }
 
@@ -299,7 +335,7 @@ const processBattleOutcome = () => {
     resetStreaks("an incomplete match");
     console.log(
       `${getFormattedTime()}: Ignoring incomplete detection, stats unchanged:`,
-      Array.from(detectedAreas)
+      Array.from(detectedAreas),
     );
     broadcastGameState(); // Broadcast state even on incomplete matches to clear stars
     return;
@@ -309,17 +345,33 @@ const processBattleOutcome = () => {
   gameState.totalBattles++;
   gameState.lastOutcomeTime = Date.now();
 
+  // Reset the idle state for relevant machines when a game is finished.
+  const resetAreaIdle = (area) => {
+    if (gameState.idleAreaStats[area]) {
+      gameState.idleAreaStats[area].idleStart = 0;
+      gameState.idleAreaStats[area].lastSeen = 0;
+    }
+  };
+
   if (outcome === "Draw") {
     gameState.totalDraws++;
     resetStreaks("a draw");
     console.log(`${getFormattedTime()}: Game ended in a DRAW.`);
     logBattleSummary(); // Log the summary after a draw
     broadcastGameState(); // Broadcast the updated state
+    ["IdleArea1", "IdleArea2", "IdleArea3", "IdleArea4"].forEach(resetAreaIdle);
     return;
   }
 
   const winner = outcome;
   const loser = winner === Faction.ZEON ? Faction.FEDERATION : Faction.ZEON;
+
+  // Federation side is playing if they win or lose
+  resetAreaIdle("IdleArea1");
+  resetAreaIdle("IdleArea2");
+  // Zeon side is playing if they win or lose
+  resetAreaIdle("IdleArea3");
+  resetAreaIdle("IdleArea4");
 
   // --- Camera Control on Score ---
   const resetCamera = (cameraName) => {
@@ -328,7 +380,7 @@ const processBattleOutcome = () => {
       const timeSinceDisabled = Date.now() - lastDisabledTime;
       if (timeSinceDisabled < MANUAL_DISABLE_LOCKOUT_MS) {
         console.log(
-          `${getFormattedTime()}: Skipping re-enable for ${cameraName} due to recent manual disable.`
+          `${getFormattedTime()}: Skipping re-enable for ${cameraName} due to recent manual disable.`,
         );
         return; // Skip re-enabling
       }
@@ -395,11 +447,12 @@ const processBattleOutcome = () => {
   triggerZDXPopup();
 };
 
-async function startRecognizeBattleResults() {
+async function startRecognizeBattleResults(onIdleShutdown, isPublic) {
+  idleShutdownCallback = onIdleShutdown;
   worker = await Tesseract.createWorker("eng");
   await worker.setParameters({
     tessedit_pageseg_mode: PSM.SINGLE_LINE,
-    tessedit_char_whitelist: "GAMEOVER",
+    tessedit_char_whitelist: "GAMEOVERBANPREST",
     debug_file: "/dev/null",
   });
 
@@ -420,17 +473,132 @@ async function startRecognizeBattleResults() {
       }
 
       // --- 2. OCR and Buffer Management ---
-      const results = await processFrame(); // Assumes processFrame() is defined elsewhere
+      const results = await processFrame();
+
       const gamedOverAreas = results
         .filter(({ text }) => text.startsWith("GAMEOVER"))
         .map(({ area }) => area);
 
+      // --- 3. Idle Detection Logic ---
+      const idleResults = results.filter(({ area }) =>
+        area.startsWith("IdleArea"),
+      );
+      let areaStatuses = [];
+
+      idleResults.forEach(({ area, text }) => {
+        // Fuzzy detection for BANPRESTO
+        const isAreaOk = /BANP|REST|PREST|ANPRE/.test(text);
+        const stats = gameState.idleAreaStats[area];
+
+        if (isAreaOk) {
+          // If the logo appears, we treat it as an 'event'.
+          // We only process it once every 30 seconds to avoid rapid counting.
+          if (currentTime - stats.lastEventTime > 30000) {
+            // Mark idle start immediately if not already tracking
+            if (stats.idleStart === 0) {
+              stats.idleStart = currentTime;
+              console.log(
+                `[${area}] IDLE started: ${new Date(stats.idleStart).toLocaleTimeString()}`,
+              );
+            }
+            stats.lastSeen = currentTime;
+            stats.lastEventTime = currentTime; // Update this ONLY when a new event is registered
+          }
+        }
+
+        // Safety timeout: If no logo seen for 5 mins, machine might be in use
+        if (stats.lastSeen > 0 && currentTime - stats.lastSeen > 300000) {
+          if (stats.idleStart > 0)
+            console.log(
+              `[${area}] Idle cycle broken (no logo for 5m). Machine active.`,
+            );
+          stats.idleStart = 0;
+          stats.lastSeen = 0;
+        }
+
+        let status = "NO LOGO";
+        if (isAreaOk) status = "LOGO DETECTED";
+
+        const secondsSinceSeen =
+          stats.lastSeen > 0
+            ? Math.floor((currentTime - stats.lastSeen) / 1000)
+            : null;
+
+        if (stats.idleStart > 0) {
+          const durationMins = Math.floor(
+            (currentTime - stats.idleStart) / 60000,
+          );
+          status += ` (Idle: ${durationMins}m, last seen: ${secondsSinceSeen}s ago)`;
+        }
+        areaStatuses.push(`${area}: ${status}`);
+      });
+
+      // Check Global Shutdown Condition:
+      // System idle duration is calculated from the time the LAST machine went idle.
+      const allIdle = Object.values(gameState.idleAreaStats).every(
+        (s) => s.idleStart > 0,
+      );
+      if (allIdle) {
+        const durations = Object.values(gameState.idleAreaStats).map(
+          (s) => currentTime - s.idleStart,
+        );
+        const minDurationMs = Math.min(...durations);
+        const minDurationMins = Math.floor(minDurationMs / 60000);
+
+        // Only log system idle status every 30 seconds to avoid flooding
+        if (currentTime % 30000 < 1000) {
+          console.log(
+            `[SYSTEM IDLE] All machines confirmed idle for ${minDurationMins} minutes.`,
+          );
+        }
+
+        // Minute 5: Play Warning (fires exactly once between min 5 and 10)
+        if (
+          minDurationMins >= 5 &&
+          minDurationMins < 10 &&
+          gameState.lastIdleWarningTime === 0
+        ) {
+          gameState.lastIdleWarningTime = currentTime;
+          const text =
+            "檢測到全線機台閒置超過五分鐘，直播將於五分鐘後自動關閉。";
+
+          if (isPublic) {
+            textToSpeech({
+              text,
+              model: TTSModel.AZURE_AI,
+              voiceID: "zh-HK-HiuMaanNeural",
+            });
+          }
+
+          if (internalEvents) {
+            // Request index.js to send a real YouTube message to the Federation stream
+            internalEvents.emit("sendYouTubeMessage", text);
+          }
+        }
+
+        // Minute 10: Trigger Shutdown
+        if (minDurationMins >= 10) {
+          console.log(
+            "CRITICAL: 10-minute idle threshold reached. Triggering auto-shutdown...",
+          );
+          if (idleShutdownCallback) {
+            await idleShutdownCallback();
+          }
+        }
+      } else {
+        // Reset warning timer if any machine becomes active
+        gameState.lastIdleWarningTime = 0;
+      }
+
       if (gamedOverAreas.length > 0) {
+        console.log(
+          `[OCR] GAME OVER detected in: ${gamedOverAreas.join(", ")}`,
+        );
         gamedOverAreas.forEach((area) => detectionBuffer.add(area));
         clearTimeout(processOutcomeTimeoutId);
         processOutcomeTimeoutId = setTimeout(
           processBattleOutcome,
-          GAMEOVER_DISPLAY_CLEAR_DELAY_MS
+          GAMEOVER_DISPLAY_CLEAR_DELAY_MS,
         );
       }
     } catch (err) {
