@@ -33,7 +33,7 @@ function preprocessAzureText(inputText, voiceID) {
     // Order matters for some replacements to avoid conflicts
     processedText = processedText.replace(/usus/g, "呃suz"); // Must be before other 'us' if any
     processedText = processedText.replace(/[鳩𨳊]/g, "朻");
-    processedText = processedText.replace(/[閪屄]/g, "西");
+    processedText = processedText.replace(/[閪屄]/g, "溪");
     processedText = processedText.replace(/𨶙/g, "撚");
     processedText = processedText.replace(/[柒𨳍]/g, "chaat");
     processedText = processedText.replace(/仆/g, "poke");
@@ -45,6 +45,7 @@ function preprocessAzureText(inputText, voiceID) {
   if (voiceID.startsWith("zh-CN")) {
     processedText = processedText.replace(/[撚𨶙]/g, "能");
     processedText = processedText.replace(/[鳩𨳊]/g, "夠");
+    processedText = processedText.replace(/[閪屄]/g, "嗨");
   }
 
   return processedText;
