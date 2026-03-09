@@ -196,6 +196,7 @@ const gameState = {
 };
 
 let idleShutdownCallback = null;
+let isShuttingDown = false;
 
 // --- Battle Detection Buffering ---
 let detectionBuffer = new Set();
@@ -449,6 +450,7 @@ const processBattleOutcome = () => {
 
 async function startRecognizeBattleResults(onIdleShutdown, isPublic) {
   idleShutdownCallback = onIdleShutdown;
+  isShuttingDown = false; // Reset shutdown flag on start
   worker = await Tesseract.createWorker("eng");
   await worker.setParameters({
     tessedit_pageseg_mode: PSM.SINGLE_LINE,
@@ -577,7 +579,8 @@ async function startRecognizeBattleResults(onIdleShutdown, isPublic) {
         }
 
         // Minute 10: Trigger Shutdown
-        if (minDurationMins >= 10) {
+        if (minDurationMins >= 10 && !isShuttingDown) {
+          isShuttingDown = true;
           console.log(
             "CRITICAL: 10-minute idle threshold reached. Triggering auto-shutdown...",
           );
@@ -618,6 +621,7 @@ async function startRecognizeBattleResults(onIdleShutdown, isPublic) {
 
 async function stopRecognizeBattleResults() {
   console.log("Attempting to stop battle recognition...");
+  isShuttingDown = false; // Reset flag so it can shut down again if restarted
 
   // 1. Stop the interval from running any more recognition tasks
   if (intervalId) {
