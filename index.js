@@ -54,8 +54,8 @@ import {
 import { startTimeAnnouncer } from "./timeAnnouncer.js";
 import {
   sendTextToDXGroup,
-  TEST_GROUP_ID,
-  PUBLIC_GROUP_ID,
+  WA_TEST_GROUP_ID,
+  WA_PUBLIC_GROUP_ID,
   client as whatsappClient,
 } from "./whatsapp.js";
 // --- Global State (moved from various places, consider if these need to be in a dedicated state module later) ---
@@ -255,17 +255,21 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
         );
 
         try {
-          const targetGroupId = isPublic ? PUBLIC_GROUP_ID : TEST_GROUP_ID;
+          const targetGroupId = isPublic
+            ? WA_PUBLIC_GROUP_ID
+            : WA_TEST_GROUP_ID;
           for (const id of broadcastIds) {
             await sendTextToDXGroup(`https://youtu.be/${id}`, {
               withTyping: true,
               typingDurationMs: getRandomDelay(1200, 2000), // Shorter "pasting" time
-              pauseAfterMs: getRandomDelay(800, 1200),     // Quick safety pause
+              pauseAfterMs: getRandomDelay(800, 1200), // Quick safety pause
               groupId: targetGroupId,
             });
             // Snappier delay between the two messages
             if (broadcastIds.indexOf(id) === 0) {
-              await new Promise(resolve => setTimeout(resolve, getRandomDelay(1000, 2000)));
+              await new Promise((resolve) =>
+                setTimeout(resolve, getRandomDelay(1000, 2000)),
+              );
             }
           }
         } catch (err) {
@@ -434,8 +438,8 @@ async function main() {
   // WhatsApp command handler for forwarding messages to YouTube Live Chat
   whatsappClient.on("message", async (msg) => {
     // 1. Guard: Only process messages from the allowed groups
-    const isPublicGroup = msg.from === PUBLIC_GROUP_ID;
-    const isTestGroup = msg.from === TEST_GROUP_ID;
+    const isPublicGroup = msg.from === WA_PUBLIC_GROUP_ID;
+    const isTestGroup = msg.from === WA_TEST_GROUP_ID;
     if (!isPublicGroup && !isTestGroup) return;
 
     // 2. Guard: Only process if it starts with the expected commands

@@ -64,3 +64,5 @@ export const CLIENT_SECRET = process.env.CLIENT_SECRET;
 export const OBS_PASSWORD = process.env.OBS_PASSWORD;
 export const MINIMAX_GROUP_ID = process.env.MINIMAX_GROUP_ID;
 export const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY;
+export const WA_PUBLIC_GROUP_ID = process.env.WA_PUBLIC_GROUP_ID;
+export const WA_TEST_GROUP_ID = process.env.WA_TEST_GROUP_ID;

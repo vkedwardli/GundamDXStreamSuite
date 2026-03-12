@@ -7,8 +7,8 @@ import { getRandomDelay } from "./systemUtils.js";
 import { createMessage } from "./messageService.js";
 import {
   sendTextToDXGroup,
-  TEST_GROUP_ID,
-  PUBLIC_GROUP_ID,
+  WA_TEST_GROUP_ID,
+  WA_PUBLIC_GROUP_ID,
 } from "./whatsapp.js";
 
 let fedLiveChat = null;
@@ -195,7 +195,7 @@ function processChatMessage(chatItem, faction, io) {
   }
 
   const prefix = faction === Faction.FEDERATION ? "🔵" : "🔴";
-  const targetGroupId = isPublicStream ? PUBLIC_GROUP_ID : TEST_GROUP_ID;
+  const targetGroupId = isPublicStream ? WA_PUBLIC_GROUP_ID : WA_TEST_GROUP_ID;
   sendTextToDXGroup(`${prefix} ${msg.authorName}: ${msg.plainMessage}`, {
     groupId: targetGroupId,
     withTyping: true,

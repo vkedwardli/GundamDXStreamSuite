@@ -1,6 +1,7 @@
 import whatsapp from "whatsapp-web.js";
 const { Client, LocalAuth } = whatsapp;
 import qrcode from "qrcode-terminal";
+import { WA_TEST_GROUP_ID } from "./config.js";
 
 console.log("Starting WhatsApp Diagnostic Script...");
 console.log("NOTE: This test uses a temporary 'diagnostic-test' session.");
@@ -27,14 +28,12 @@ client.on("qr", (qr) => {
   qrcode.generate(qr, { small: true });
 });
 
-const TEST_GROUP_ID = "";
-
 client.on("ready", async () => {
   console.log("Client is ready!");
-  console.log(`Attempting to send test message to ${TEST_GROUP_ID}...`);
+  console.log(`Attempting to send test message to ${WA_TEST_GROUP_ID}...`);
   try {
     await client.sendMessage(
-      TEST_GROUP_ID,
+      WA_TEST_GROUP_ID,
       "Diagnostic test message from GundamDXStreamSuite.",
     );
     console.log(

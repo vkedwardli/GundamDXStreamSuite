@@ -1,9 +1,7 @@
 import whatsapp from "whatsapp-web.js";
 const { Client, LocalAuth } = whatsapp;
 import qrcode from "qrcode-terminal";
-
-export const PUBLIC_GROUP_ID = ""; // DX LCK Group
-export const TEST_GROUP_ID = ""; // Internal Testing Group
+export { WA_PUBLIC_GROUP_ID, WA_TEST_GROUP_ID } from "./config.js";
 
 const authStrategy = new LocalAuth();
 
@@ -113,7 +111,7 @@ export async function sendTextToDXGroup(
     withTyping = false,
     typingDurationMs = 1800,
     pauseAfterMs = 800,
-    groupId = PUBLIC_GROUP_ID,
+    groupId = WA_PUBLIC_GROUP_ID,
   } = {},
 ) {
   await clientReady; // Ensure client is ready before sending
