@@ -259,10 +259,14 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
           for (const id of broadcastIds) {
             await sendTextToDXGroup(`https://youtu.be/${id}`, {
               withTyping: true,
-              typingDurationMs: getRandomDelay(1500, 2200),
-              pauseAfterMs: getRandomDelay(1000, 1500),
+              typingDurationMs: getRandomDelay(1200, 2000), // Shorter "pasting" time
+              pauseAfterMs: getRandomDelay(800, 1200),     // Quick safety pause
               groupId: targetGroupId,
             });
+            // Snappier delay between the two messages
+            if (broadcastIds.indexOf(id) === 0) {
+              await new Promise(resolve => setTimeout(resolve, getRandomDelay(1000, 2000)));
+            }
           }
         } catch (err) {
           console.error("Failed to send WhatsApp notification:", err);

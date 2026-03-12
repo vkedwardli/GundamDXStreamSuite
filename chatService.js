@@ -199,8 +199,8 @@ function processChatMessage(chatItem, faction, io) {
   sendTextToDXGroup(`${prefix} ${msg.authorName}: ${msg.plainMessage}`, {
     groupId: targetGroupId,
     withTyping: true,
-    typingDurationMs: getRandomDelay(200, 450), // Randomize typing speed
-    pauseAfterMs: getRandomDelay(50, 150),
+    typingDurationMs: getRandomDelay(600, 1200), // Increased to ensure visibility
+    pauseAfterMs: getRandomDelay(150, 300),
   });
 }
 

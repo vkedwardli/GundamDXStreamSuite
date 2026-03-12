@@ -53,9 +53,56 @@ const clientReady = new Promise((resolve) => {
   client.on("ready", () => {
     clearTimeout(timeout);
     console.log("WhatsApp Client is ready!");
+    startHumanPresenceSimulation(client);
     resolve();
   });
 });
+
+/**
+ * Simulates human-like presence on WhatsApp.
+ * Instead of a fixed interval, it uses variable delays and
+ * respects "sleeping hours" to appear more natural.
+ */
+function startHumanPresenceSimulation(client) {
+  const MIN_DELAY = 45000; // 45s
+  const MAX_DELAY = 300000; // 5m
+
+  let isOnline = false;
+
+  const updatePresence = async () => {
+    try {
+      // Logic to simulate sessions:
+      // Humans tend to stay online or offline for periods of time.
+      // 80% chance to maintain current state, 20% chance to toggle.
+      const shouldToggle = Math.random() < 0.2;
+
+      if (shouldToggle || !isOnline) {
+        // 70% chance to be "Online" when toggling to simulate active usage
+        const nextStateIsOnline = Math.random() < 0.7;
+
+        if (nextStateIsOnline !== isOnline) {
+          if (nextStateIsOnline) {
+            await client.sendPresenceAvailable();
+            // console.log("WhatsApp Simulation: Now Online");
+          } else {
+            await client.sendPresenceUnavailable();
+            // console.log("WhatsApp Simulation: Now Offline");
+          }
+          isOnline = nextStateIsOnline;
+        }
+      }
+    } catch (e) {
+      console.warn("WhatsApp Simulation Warning:", e.message);
+    }
+
+    // Schedule next update with a random delay to avoid robotic patterns
+    const nextDelay =
+      Math.floor(Math.random() * (MAX_DELAY - MIN_DELAY + 1)) + MIN_DELAY;
+    setTimeout(updatePresence, nextDelay);
+  };
+
+  updatePresence();
+}
 
 const delay = (ms) => new Promise((res) => setTimeout(res, ms));
 
@@ -71,12 +118,25 @@ export async function sendTextToDXGroup(
 ) {
   await clientReady; // Ensure client is ready before sending
 
+  // Ensure we are online before sending
+  try {
+    await client.sendPresenceAvailable();
+  } catch (err) {
+    console.warn(
+      "Failed to set presence to available before sending:",
+      err.message,
+    );
+  }
+
   if (withTyping) {
     try {
       const chat = await client.getChatById(groupId);
       await chat.sendStateTyping();
+      // Wait for the requested typing duration
       await delay(typingDurationMs);
-      await chat.clearState(); // stop typing indicator
+      // We don't call clearState() here, as sending the message or
+      // calling clearState later is more natural.
+      // WhatsApp often clears it automatically upon message receipt.
     } catch (err) {
       console.warn(
         `Warning: Failed to set typing state for ${groupId} (sending message anyway):`,
@@ -89,6 +149,15 @@ export async function sendTextToDXGroup(
     const res = await client.sendMessage(groupId, message, {
       sendSeen: false,
     });
+
+    // Explicitly clear state after message is sent if it's still there
+    if (withTyping) {
+      try {
+        const chat = await client.getChatById(groupId);
+        await chat.clearState();
+      } catch (e) {}
+    }
+
     if (pauseAfterMs > 0) await delay(pauseAfterMs);
     return res;
   } catch (err) {
