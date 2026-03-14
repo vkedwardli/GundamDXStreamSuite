@@ -40,8 +40,8 @@ async function announceTime() {
     exec("ffplay -nodisp -autoexit 11pm.m4a", (error) => {
       if (error) console.error("Error playing 11pm.m4a:", error.message);
     });
-    // Wait for the 7-second gap identified during testing
-    await new Promise((resolve) => setTimeout(resolve, 7000));
+    // Wait for the 6-second gap identified during testing
+    await new Promise((resolve) => setTimeout(resolve, 6000));
   }
 
   const federationWins = gameState.totalWins[Faction.FEDERATION.value] || 0;
