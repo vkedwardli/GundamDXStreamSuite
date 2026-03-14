@@ -1,4 +1,5 @@
 import schedule from "node-schedule";
+import { exec } from "child_process";
 import { textToSpeech } from "./ttsService.js";
 import { TTSModel, Faction } from "./config.js";
 import { gameState } from "./score.js";
@@ -32,11 +33,28 @@ async function announceTime() {
     return;
   }
 
+  const is11PM = hour === 23;
+
+  if (is11PM) {
+    // Play the 11pm special preamble in the background
+    exec("ffplay -nodisp -autoexit 11pm.m4a", (error) => {
+      if (error) console.error("Error playing 11pm.m4a:", error.message);
+    });
+    // Wait for the 7-second gap identified during testing
+    await new Promise((resolve) => setTimeout(resolve, 7000));
+  }
+
   const federationWins = gameState.totalWins[Faction.FEDERATION.value] || 0;
   const zeonWins = gameState.totalWins[Faction.ZEON.value] || 0;
 
-  const sponsor = sponsors[sponsorIndex];
-  sponsorIndex = (sponsorIndex + 1) % sponsors.length;
+  let closingPhrase = "";
+  if (is11PM) {
+    closingPhrase = "I gonna bring the beat back!";
+  } else {
+    const sponsor = sponsors[sponsorIndex];
+    sponsorIndex = (sponsorIndex + 1) % sponsors.length;
+    closingPhrase = `報時訊號由 ${sponsor} 贊助播出`;
+  }
 
   const hourMap = {
     18: "六",
@@ -53,7 +71,7 @@ async function announceTime() {
   const period = hour >= 0 && hour <= 2 ? "凌晨" : "晚上";
   const timeString = `${period}${hourText}點正`;
 
-  const text = `宇宙世紀標準時間，而家係 ${timeString}，聯邦 ${federationWins}勝，自護 ${zeonWins}勝。報時訊號由 ${sponsor} 贊助播出`;
+  const text = `宇宙世紀標準時間，而家係 ${timeString}，聯邦 ${federationWins}勝，自護 ${zeonWins}勝。${closingPhrase}`;
 
   console.log(`Announcing: ${text}`);
   textToSpeech({
