@@ -167,6 +167,7 @@ let intervalId = null;
 // --- Constants ---
 const STREAK_RESET_THRESHOLD_MS = 360000; // 6 minutes
 const GAMEOVER_DISPLAY_CLEAR_DELAY_MS = 2000; // 2 seconds
+const BATTLE_OUTCOME_LOCKOUT_MS = 30000; // 30 seconds
 
 // --- Centralized Game State ---
 const gameState = {
@@ -315,6 +316,17 @@ const triggerZDXPopup = () => {
 // Main function to determine and process the battle's outcome
 const processBattleOutcome = () => {
   if (detectionBuffer.size === 0) return; // Guard against empty processing
+
+  const currentTime = Date.now();
+  if (currentTime - gameState.lastOutcomeTime < BATTLE_OUTCOME_LOCKOUT_MS) {
+    console.log(
+      `${getFormattedTime()}: Ignoring duplicate detection within ${
+        BATTLE_OUTCOME_LOCKOUT_MS / 1000
+      }s cool-down period.`,
+    );
+    detectionBuffer.clear();
+    return;
+  }
 
   const detectedAreas = new Set(detectionBuffer);
   detectionBuffer.clear(); // Process and clear immediately
