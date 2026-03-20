@@ -363,6 +363,13 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
 async function stopStreaming(io) {
   // io might be needed for emitting status during stop
   try {
+    // 0. Guard: Check if we are actually streaming
+    const isActuallyStreaming = await IsLiveStreaming();
+    if (!isActuallyStreaming) {
+      console.log("Stop requested, but OBS is not streaming. Skipping shutdown sequence.");
+      return;
+    }
+
     const now = new Date();
     const hour = now.getHours();
     // Check if the time is between 10 PM (22) and 3 AM (exclusive of 3, so 22, 23, 0, 1, 2)
