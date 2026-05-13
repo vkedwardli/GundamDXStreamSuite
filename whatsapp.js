@@ -1,9 +1,20 @@
 import whatsapp from "whatsapp-web.js";
 const { Client, LocalAuth } = whatsapp;
 import qrcode from "qrcode-terminal";
-export { WA_PUBLIC_GROUP_ID, WA_TEST_GROUP_ID } from "./config.js";
+import path from "path";
+import { fileURLToPath } from "url";
+import { WA_PUBLIC_GROUP_ID, WA_TEST_GROUP_ID } from "./config.js";
 
-const authStrategy = new LocalAuth();
+export { WA_PUBLIC_GROUP_ID, WA_TEST_GROUP_ID };
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const AUTH_CLIENT_ID = process.env.WA_CLIENT_ID;
+const AUTH_DATA_PATH = path.join(__dirname, ".wwebjs_auth");
+const authStrategyOptions = { dataPath: AUTH_DATA_PATH };
+if (AUTH_CLIENT_ID) {
+  authStrategyOptions.clientId = AUTH_CLIENT_ID;
+}
+const authStrategy = new LocalAuth(authStrategyOptions);
 
 // Patch the logout method to catch the EBUSY error on Windows
 const originalLogout = authStrategy.logout.bind(authStrategy);
@@ -18,7 +29,6 @@ authStrategy.logout = async () => {
   }
 };
 
-console.log("Initializing WhatsApp client...");
 export const client = new Client({
   authStrategy,
   puppeteer: {
@@ -26,16 +36,12 @@ export const client = new Client({
   },
 });
 
-client.on("loading_screen", (percent, message) => {
-  console.log("WhatsApp Loading:", percent, message);
+client.on("auth_failure", (msg) => {
+  console.error("WhatsApp Auth Failure:", msg);
 });
 
 client.on("authenticated", () => {
   console.log("WhatsApp Authenticated");
-});
-
-client.on("auth_failure", (msg) => {
-  console.error("WhatsApp Auth Failure:", msg);
 });
 
 const clientReady = new Promise((resolve) => {
@@ -89,9 +95,7 @@ function startHumanPresenceSimulation(client) {
           isOnline = nextStateIsOnline;
         }
       }
-    } catch (e) {
-      console.warn("WhatsApp Simulation Warning:", e.message);
-    }
+    } catch {}
 
     // Schedule next update with a random delay to avoid robotic patterns
     const nextDelay =
@@ -103,6 +107,18 @@ function startHumanPresenceSimulation(client) {
 }
 
 const delay = (ms) => new Promise((res) => setTimeout(res, ms));
+let isShuttingDown = false;
+
+async function shutdown(exitCode) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  try {
+    await client.destroy();
+  } catch (err) {
+    console.error("Failed to close WhatsApp client cleanly:", err);
+  }
+  process.exit(exitCode);
+}
 
 // Send a text message to the target group.
 export async function sendTextToDXGroup(
@@ -119,12 +135,7 @@ export async function sendTextToDXGroup(
   // Ensure we are online before sending
   try {
     await client.sendPresenceAvailable();
-  } catch (err) {
-    console.warn(
-      "Failed to set presence to available before sending:",
-      err.message,
-    );
-  }
+  } catch {}
 
   if (withTyping) {
     try {
@@ -135,28 +146,33 @@ export async function sendTextToDXGroup(
       // We don't call clearState() here, as sending the message or
       // calling clearState later is more natural.
       // WhatsApp often clears it automatically upon message receipt.
-    } catch (err) {
-      console.warn(
-        `Warning: Failed to set typing state for ${groupId} (sending message anyway):`,
-        err.message,
-      );
-    }
+    } catch {}
   }
 
   try {
-    const res = await client.sendMessage(groupId, message, {
+    const chat = await client.getChatById(groupId);
+    if (!chat?.isGroup) {
+      throw new Error(`${groupId} resolved, but it is not a group chat.`);
+    }
+
+    const res = await client.sendMessage(chat.id._serialized, message, {
       sendSeen: false,
+      waitUntilMsgSent: true,
     });
+
+    if (!res) {
+      throw new Error("sendMessage returned no message object.");
+    }
 
     // Explicitly clear state after message is sent if it's still there
     if (withTyping) {
       try {
-        const chat = await client.getChatById(groupId);
         await chat.clearState();
-      } catch (e) {}
+      } catch {}
     }
 
     if (pauseAfterMs > 0) await delay(pauseAfterMs);
+    console.log("WhatsApp message sent");
     return res;
   } catch (err) {
     console.error(`Failed to send WhatsApp message to ${groupId}:`, err);
@@ -171,7 +187,7 @@ client.on("qr", (qr) => {
 });
 
 client.on("disconnected", (reason) => {
-  console.log("WhatsApp Client disconnected:", reason);
+  console.error("WhatsApp Client disconnected:", reason);
 });
 
 client.on("error", (err) => {
@@ -214,5 +230,12 @@ process.on("uncaughtException", (err) => {
   }
 });
 
-console.log("Calling WhatsApp client.initialize()...");
+process.once("SIGINT", () => {
+  shutdown(130);
+});
+
+process.once("SIGTERM", () => {
+  shutdown(143);
+});
+
 client.initialize();
