@@ -451,7 +451,15 @@ async function main() {
 
     // 2. Guard: Only process if it starts with the expected commands
     const body = msg.body.trim();
-    if (!body.startsWith("!fed ") && !body.startsWith("!zeon ")) return;
+    const ttsCommandRegex = /^[!！]([mu]?say|[mu]?gossip|[mu]?anchor)\b/i;
+    const isFedCommand = body.startsWith("!fed ") || body.startsWith("！fed ");
+    const isZeonCommand =
+      body.startsWith("!zeon ") || body.startsWith("！zeon ");
+    const hasExplicitTarget =
+      isFedCommand || isZeonCommand;
+    const isBareTTS = ttsCommandRegex.test(body);
+
+    if (!hasExplicitTarget && !isBareTTS) return;
 
     const offlineResponses = [
       "東主有喜，暫停直播。",
@@ -485,12 +493,15 @@ async function main() {
     let targetVideoId = null;
     let messageContent = "";
 
-    if (body.startsWith("!fed ")) {
+    if (isFedCommand) {
       targetVideoId = currentBroadcastIds[0];
       messageContent = body.slice(5).trim();
-    } else if (body.startsWith("!zeon ")) {
+    } else if (isZeonCommand) {
       targetVideoId = currentBroadcastIds[1];
       messageContent = body.slice(6).trim();
+    } else if (isBareTTS) {
+      targetVideoId = currentBroadcastIds[0];
+      messageContent = body;
     }
 
     if (targetVideoId && messageContent) {
@@ -500,9 +511,7 @@ async function main() {
         const senderName = contact.pushname || "神秘人";
 
         // Check if message starts with any of the TTS command variants
-        const isTTS = /^[!！]([mu]?say|[mu]?gossip|[mu]?anchor)\b/i.test(
-          messageContent,
-        );
+        const isTTS = ttsCommandRegex.test(messageContent);
 
         if (isTTS) {
           // Send a single combined message: "!gossip Hello !:Edward Li"
