@@ -500,7 +500,9 @@ async function main() {
         const senderName = contact.pushname || "神秘人";
 
         // Check if message starts with any of the TTS command variants
-        const isTTS = /^[!！](m?say|m?gossip|m?anchor)\b/i.test(messageContent);
+        const isTTS = /^[!！]([mu]?say|[mu]?gossip|[mu]?anchor)\b/i.test(
+          messageContent,
+        );
 
         if (isTTS) {
           // Send a single combined message: "!gossip Hello !:Edward Li"

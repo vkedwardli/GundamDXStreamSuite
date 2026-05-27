@@ -135,6 +135,14 @@ function processChatMessage(chatItem, faction, io) {
     msg.plainMessage = `🇨🇳${currentMegaphoneState.icon} ` + ttsText;
     ttsVoiceID = "zh-CN-YunjianNeural";
   } else if (
+    msg.plainMessage.startsWith("!usay ") ||
+    msg.plainMessage.startsWith("！usay ")
+  ) {
+    ttsText = msg.plainMessage.slice(6);
+    msg.message = `🌐${currentMegaphoneState.icon} ` + msg.message.slice(6);
+    msg.plainMessage = `🌐${currentMegaphoneState.icon} ` + ttsText;
+    ttsVoiceID = "en-US-AndrewMultilingualNeural";
+  } else if (
     msg.plainMessage.startsWith("!gossip ") ||
     msg.plainMessage.startsWith("！gossip ")
   ) {
@@ -151,6 +159,14 @@ function processChatMessage(chatItem, faction, io) {
     msg.plainMessage = `🇨🇳${currentMegaphoneState.gossip} ` + ttsText;
     ttsVoiceID = "zh-CN-XiaoyiNeural";
   } else if (
+    msg.plainMessage.startsWith("!ugossip ") ||
+    msg.plainMessage.startsWith("！ugossip ")
+  ) {
+    ttsText = msg.plainMessage.slice(9);
+    msg.message = `🌐${currentMegaphoneState.gossip} ` + msg.message.slice(9);
+    msg.plainMessage = `🌐${currentMegaphoneState.gossip} ` + ttsText;
+    ttsVoiceID = "en-US-AvaMultilingualNeural";
+  } else if (
     msg.plainMessage.startsWith("!anchor ") ||
     msg.plainMessage.startsWith("！anchor ")
   ) {
@@ -166,6 +182,14 @@ function processChatMessage(chatItem, faction, io) {
     msg.message = `🇨🇳${currentMegaphoneState.anchor} ` + msg.message.slice(9);
     msg.plainMessage = `🇨🇳${currentMegaphoneState.anchor} ` + ttsText;
     ttsVoiceID = "zh-CN-XiaoxiaoNeural";
+  } else if (
+    msg.plainMessage.startsWith("!uanchor ") ||
+    msg.plainMessage.startsWith("！uanchor ")
+  ) {
+    ttsText = msg.plainMessage.slice(9);
+    msg.message = `🌐${currentMegaphoneState.anchor} ` + msg.message.slice(9);
+    msg.plainMessage = `🌐${currentMegaphoneState.anchor} ` + ttsText;
+    ttsVoiceID = "en-US-EmmaMultilingualNeural";
   }
 
   // NOW we emit the final version with the icon to the chat box
