@@ -8,7 +8,7 @@ import { scheduler } from "timers/promises";
 import { textToSpeech } from "./ttsService.js";
 import { TTSModel, Faction } from "./config.js";
 import { enableCam, showZDXPopup } from "./obsService.js";
-import { createMessage, getFormattedTime } from "./messageService.js";
+import { createMessage } from "./messageService.js";
 
 const recentlyDisabledCams = new Map();
 const MANUAL_DISABLE_LOCKOUT_MS = 10000; // 10 seconds
@@ -16,7 +16,7 @@ const MANUAL_DISABLE_LOCKOUT_MS = 10000; // 10 seconds
 // This function is called from serverSetup.js when a user manually disables a camera
 const markCameraAsDisabled = (cameraName) => {
   console.log(
-    `${getFormattedTime()}: Manually disabling ${cameraName}, locking for ${
+    `Manually disabling ${cameraName}, locking for ${
       MANUAL_DISABLE_LOCKOUT_MS / 1000
     }s.`,
   );
@@ -167,7 +167,11 @@ let intervalId = null;
 // --- Constants ---
 const STREAK_RESET_THRESHOLD_MS = 360000; // 6 minutes
 const GAMEOVER_DISPLAY_CLEAR_DELAY_MS = 2000; // 2 seconds
+// Require a real clear period so one long end screen cannot be counted twice.
+const GAMEOVER_SESSION_CLEAR_DELAY_MS = 12000; // 12 seconds
 const BATTLE_OUTCOME_LOCKOUT_MS = 30000; // 30 seconds
+const OCR_INTERVAL_MS = 1000; // 1 second
+const SLOW_OCR_CYCLE_LOG_MS = 3000; // Log when capture + OCR falls behind
 
 // --- Centralized Game State ---
 const gameState = {
@@ -202,6 +206,11 @@ let isShuttingDown = false;
 // --- Battle Detection Buffering ---
 let detectionBuffer = new Set();
 let processOutcomeTimeoutId = null;
+let gameOverSessionActive = false;
+let gameOverSessionProcessed = false;
+let gameOverSessionClearTimeoutId = null;
+let pendingIncompleteAreasKey = "";
+let isRecognitionCycleRunning = false;
 
 const streakMessages = {
   3: "帽子戲法",
@@ -259,7 +268,7 @@ Win Ratio:     ${ratioString}
 const resetStreaks = (reason) => {
   if (gameState.lastWinner) {
     // Only log if there was an active streak
-    console.log(`${getFormattedTime()}: Win streak reset due to ${reason}.`);
+    console.log(`Win streak reset due to ${reason}.`);
   }
   gameState.streaks[Faction.ZEON.value] = 0;
   gameState.streaks[Faction.FEDERATION.value] = 0;
@@ -313,46 +322,120 @@ const triggerZDXPopup = () => {
   }
 };
 
-// Main function to determine and process the battle's outcome
-const processBattleOutcome = () => {
-  if (detectionBuffer.size === 0) return; // Guard against empty processing
-
-  const currentTime = Date.now();
-  if (currentTime - gameState.lastOutcomeTime < BATTLE_OUTCOME_LOCKOUT_MS) {
-    console.log(
-      `${getFormattedTime()}: Ignoring duplicate detection within ${
-        BATTLE_OUTCOME_LOCKOUT_MS / 1000
-      }s cool-down period.`,
-    );
-    detectionBuffer.clear();
-    return;
-  }
-
-  const detectedAreas = new Set(detectionBuffer);
-  detectionBuffer.clear(); // Process and clear immediately
-
+const getBattleOutcomeFromAreas = (detectedAreas) => {
   const zeonLost = detectedAreas.has("Area3") && detectedAreas.has("Area4");
   const federationLost =
     detectedAreas.has("Area1") && detectedAreas.has("Area2");
 
-  let outcome = null;
-
   if (zeonLost && federationLost) {
-    outcome = "Draw";
-  } else if (zeonLost) {
-    outcome = Faction.FEDERATION; // Zeon lost, so Federation wins
-  } else if (federationLost) {
-    outcome = Faction.ZEON; // Federation lost, so Zeon wins
-  } else {
-    // Incomplete match (e.g., only 1 player, or 1 from each side)
-    resetStreaks("an incomplete match");
-    console.log(
-      `${getFormattedTime()}: Ignoring incomplete detection, stats unchanged:`,
-      Array.from(detectedAreas),
-    );
-    broadcastGameState(); // Broadcast state even on incomplete matches to clear stars
+    return "Draw";
+  }
+  if (zeonLost) {
+    return Faction.FEDERATION; // Zeon lost, so Federation wins
+  }
+  if (federationLost) {
+    return Faction.ZEON; // Federation lost, so Zeon wins
+  }
+
+  return null;
+};
+
+const resetGameOverSession = () => {
+  gameOverSessionActive = false;
+  gameOverSessionProcessed = false;
+  pendingIncompleteAreasKey = "";
+  detectionBuffer.clear();
+
+  if (processOutcomeTimeoutId) {
+    clearTimeout(processOutcomeTimeoutId);
+    processOutcomeTimeoutId = null;
+  }
+  if (gameOverSessionClearTimeoutId) {
+    clearTimeout(gameOverSessionClearTimeoutId);
+    gameOverSessionClearTimeoutId = null;
+  }
+};
+
+const resetRecognitionCycleState = () => {
+  isRecognitionCycleRunning = false;
+};
+
+const finalizeIncompleteBattleOutcome = () => {
+  if (gameOverSessionProcessed || detectionBuffer.size === 0) return;
+
+  const detectedAreas = new Set(detectionBuffer);
+  detectionBuffer.clear();
+  gameOverSessionProcessed = true;
+
+  // Incomplete match (e.g., only 1 player, or 1 from each side)
+  resetStreaks("an incomplete match");
+  console.log(
+    "Ignoring incomplete detection, stats unchanged:",
+    Array.from(detectedAreas),
+  );
+  broadcastGameState(); // Broadcast state even on incomplete matches to clear stars
+};
+
+const scheduleGameOverSessionClear = () => {
+  if (gameOverSessionClearTimeoutId || !gameOverSessionActive) return;
+
+  gameOverSessionClearTimeoutId = setTimeout(() => {
+    gameOverSessionClearTimeoutId = null;
+    finalizeIncompleteBattleOutcome();
+    resetGameOverSession();
+  }, GAMEOVER_SESSION_CLEAR_DELAY_MS);
+};
+
+const markGameOverSessionActive = () => {
+  if (!gameOverSessionActive) {
+    gameOverSessionActive = true;
+    gameOverSessionProcessed = false;
+    pendingIncompleteAreasKey = "";
+  }
+
+  if (gameOverSessionClearTimeoutId) {
+    clearTimeout(gameOverSessionClearTimeoutId);
+    gameOverSessionClearTimeoutId = null;
+  }
+};
+
+// Main function to determine and process the battle's outcome
+const processBattleOutcome = () => {
+  if (detectionBuffer.size === 0) return; // Guard against empty processing
+  if (gameOverSessionProcessed) {
+    detectionBuffer.clear();
     return;
   }
+
+  const currentTime = Date.now();
+  if (currentTime - gameState.lastOutcomeTime < BATTLE_OUTCOME_LOCKOUT_MS) {
+    console.log(
+      `Ignoring duplicate detection within ${
+        BATTLE_OUTCOME_LOCKOUT_MS / 1000
+      }s cool-down period.`,
+    );
+    detectionBuffer.clear();
+    gameOverSessionProcessed = true;
+    return;
+  }
+
+  const detectedAreas = new Set(detectionBuffer);
+  const outcome = getBattleOutcomeFromAreas(detectedAreas);
+
+  if (!outcome) {
+    const areasKey = Array.from(detectedAreas).sort().join(",");
+    if (areasKey !== pendingIncompleteAreasKey) {
+      pendingIncompleteAreasKey = areasKey;
+      console.log(
+        "Waiting for paired GAME OVER detection:",
+        Array.from(detectedAreas),
+      );
+    }
+    return;
+  }
+
+  detectionBuffer.clear(); // Process and clear immediately
+  gameOverSessionProcessed = true;
 
   // A valid 2v2 match was detected, update totals.
   gameState.totalBattles++;
@@ -369,10 +452,12 @@ const processBattleOutcome = () => {
   if (outcome === "Draw") {
     gameState.totalDraws++;
     resetStreaks("a draw");
-    console.log(`${getFormattedTime()}: Game ended in a DRAW.`);
+    console.log("Game ended in a DRAW.");
     logBattleSummary(); // Log the summary after a draw
     broadcastGameState(); // Broadcast the updated state
-    ["IdleArea1", "IdleArea2", "IdleArea3", "IdleArea4"].forEach(resetAreaIdle);
+    ["IdleArea1", "IdleArea2", "IdleArea3", "IdleArea4"].forEach(
+      resetAreaIdle,
+    );
     return;
   }
 
@@ -393,7 +478,7 @@ const processBattleOutcome = () => {
       const timeSinceDisabled = Date.now() - lastDisabledTime;
       if (timeSinceDisabled < MANUAL_DISABLE_LOCKOUT_MS) {
         console.log(
-          `${getFormattedTime()}: Skipping re-enable for ${cameraName} due to recent manual disable.`,
+          `Skipping re-enable for ${cameraName} due to recent manual disable.`,
         );
         return; // Skip re-enabling
       }
@@ -421,9 +506,7 @@ const processBattleOutcome = () => {
   const newStreak = ++gameState.streaks[winner.value];
   gameState.lastWinner = winner;
 
-  const outputMessage = `${getFormattedTime()}: ${
-    winner.value
-  } wins! Consecutive wins: ${newStreak}`;
+  const outputMessage = `${winner.value} wins! Consecutive wins: ${newStreak}`;
   console.log(outputMessage);
 
   // --- 3. Handle Streak Announcements ---
@@ -473,7 +556,16 @@ async function startRecognizeBattleResults(onIdleShutdown, isPublic) {
   console.log("OCR worker started. Monitoring for battle results...");
   broadcastGameState(); // Broadcast initial state on start
 
-  intervalId = setInterval(async () => {
+  const runRecognitionCycle = async () => {
+    if (!intervalId) return;
+
+    if (isRecognitionCycleRunning) {
+      return;
+    }
+
+    isRecognitionCycleRunning = true;
+    const cycleStartTime = Date.now();
+
     try {
       const currentTime = Date.now();
 
@@ -606,20 +698,42 @@ async function startRecognizeBattleResults(onIdleShutdown, isPublic) {
       }
 
       if (gamedOverAreas.length > 0) {
+        markGameOverSessionActive();
         console.log(
-          `[OCR] GAME OVER detected in: ${gamedOverAreas.join(", ")}`,
+          `[OCR] GAME OVER detected in: ${gamedOverAreas.join(
+            ", ",
+          )}`,
         );
-        gamedOverAreas.forEach((area) => detectionBuffer.add(area));
-        clearTimeout(processOutcomeTimeoutId);
-        processOutcomeTimeoutId = setTimeout(
-          processBattleOutcome,
-          GAMEOVER_DISPLAY_CLEAR_DELAY_MS,
-        );
+        if (!gameOverSessionProcessed) {
+          gamedOverAreas.forEach((area) => detectionBuffer.add(area));
+          clearTimeout(processOutcomeTimeoutId);
+          processOutcomeTimeoutId = setTimeout(
+            processBattleOutcome,
+            GAMEOVER_DISPLAY_CLEAR_DELAY_MS,
+          );
+        }
+      } else {
+        scheduleGameOverSessionClear();
       }
     } catch (err) {
       console.error("Error during recognition cycle:", err.message);
+    } finally {
+      const cycleDuration = Date.now() - cycleStartTime;
+      if (cycleDuration > SLOW_OCR_CYCLE_LOG_MS) {
+        console.log(
+          `OCR cycle took ${cycleDuration}ms.`,
+        );
+      }
+      isRecognitionCycleRunning = false;
+
+      if (intervalId) {
+        const nextDelay = Math.max(0, OCR_INTERVAL_MS - cycleDuration);
+        intervalId = setTimeout(runRecognitionCycle, nextDelay);
+      }
     }
-  }, 1000); // OCR every second
+  };
+
+  intervalId = setTimeout(runRecognitionCycle, 0);
 
   const gracefulShutdown = async () => {
     console.log("\nReceived shutdown signal (Ctrl+C).");
@@ -635,12 +749,14 @@ async function stopRecognizeBattleResults() {
   console.log("Attempting to stop battle recognition...");
   isShuttingDown = false; // Reset flag so it can shut down again if restarted
 
-  // 1. Stop the interval from running any more recognition tasks
+  // 1. Stop the timer from running any more recognition tasks
   if (intervalId) {
-    clearInterval(intervalId);
+    clearTimeout(intervalId);
     intervalId = null; // Set to null to indicate it's stopped
-    console.log("Recognition interval stopped.");
+    console.log("Recognition timer stopped.");
   }
+  resetGameOverSession();
+  resetRecognitionCycleState();
 
   // 2. Terminate the Tesseract worker to free up resources
   if (worker) {

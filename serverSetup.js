@@ -5,12 +5,50 @@ import fs from "fs/promises";
 import { Server } from "socket.io";
 import { oAuth2Client } from "./youtubeService.js";
 import { TOKEN_PATH as YOUTUBE_TOKEN_PATH } from "./config.js";
+import { getFormattedTime } from "./messageService.js";
 
 import { EventEmitter } from "events";
 const __dirname = import.meta.dirname;
 
 export let io; // Export io to be used in other modules if needed
 export const internalEvents = new EventEmitter();
+
+const qrArtRegex = /^[\s▄▀█]+$/;
+
+function formatConsoleArg(arg) {
+  if (arg instanceof Error) {
+    return arg.stack || arg.message;
+  }
+  if (typeof arg === "object") {
+    return JSON.stringify(arg, null, 2);
+  }
+  return String(arg);
+}
+
+function isQrArt(message) {
+  const compactMessage = message.replace(/\r?\n/g, "");
+  return compactMessage.length > 0 && qrArtRegex.test(compactMessage);
+}
+
+function buildTimestampedConsoleArgs(args) {
+  const message = args.map(formatConsoleArg).join(" ");
+  const trimmedMessage = message.trim();
+
+  if (trimmedMessage.length === 0 || isQrArt(trimmedMessage)) {
+    return { emittedMessage: message, consoleArgs: args };
+  }
+
+  const timestamp = `${getFormattedTime()}:`;
+  const timestampedMessage = trimmedMessage
+    .split(/\r?\n/)
+    .map((line) => `${timestamp} ${line}`)
+    .join("\n");
+
+  return {
+    emittedMessage: timestampedMessage,
+    consoleArgs: [timestampedMessage],
+  };
+}
 
 export function setupServer(onClientConnected) {
   const server = http.createServer(async (req, res) => {
@@ -101,29 +139,21 @@ export function setupServer(onClientConnected) {
   // Override console.log to send to all clients via Socket.IO
   const originalConsoleLog = console.log;
   console.log = function (...args) {
-    const message = args
-      .map((arg) =>
-        typeof arg === "object" ? JSON.stringify(arg, null, 2) : arg
-      )
-      .join(" ");
+    const { emittedMessage, consoleArgs } = buildTimestampedConsoleArgs(args);
     if (io) {
       // Check if io is initialized
-      io.emit("console", message);
+      io.emit("console", emittedMessage);
     }
-    originalConsoleLog.apply(console, args);
+    originalConsoleLog.apply(console, consoleArgs);
   };
   // Also override console.error
   const originalConsoleError = console.error;
   console.error = function (...args) {
-    const message = args
-      .map((arg) =>
-        typeof arg === "object" ? JSON.stringify(arg, null, 2) : arg
-      )
-      .join(" ");
+    const { emittedMessage, consoleArgs } = buildTimestampedConsoleArgs(args);
     if (io) {
-      io.emit("console_error", message); // Use a different event for errors
+      io.emit("console_error", emittedMessage); // Use a different event for errors
     }
-    originalConsoleError.apply(console, args);
+    originalConsoleError.apply(console, consoleArgs);
   };
 
   io.on("connection", (client) => {
