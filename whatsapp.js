@@ -44,6 +44,7 @@ client.on("authenticated", () => {
   console.log("WhatsApp Authenticated");
 });
 
+let presenceSimulationStarted = false;
 const clientReady = new Promise((resolve) => {
   const timeout = setTimeout(() => {
     console.error(
@@ -57,7 +58,10 @@ const clientReady = new Promise((resolve) => {
   client.on("ready", () => {
     clearTimeout(timeout);
     console.log("WhatsApp Client is ready!");
-    startHumanPresenceSimulation(client);
+    if (!presenceSimulationStarted) {
+      presenceSimulationStarted = true;
+      startHumanPresenceSimulation(client);
+    }
     resolve();
   });
 });
@@ -109,6 +113,18 @@ function startHumanPresenceSimulation(client) {
 const delay = (ms) => new Promise((res) => setTimeout(res, ms));
 let isShuttingDown = false;
 
+async function sendChatState(groupId, state) {
+  return client.pupPage.evaluate(
+    async (chatId, chatState) => {
+      if (typeof window.WWebJS?.sendChatstate !== "function") return false;
+      await window.WWebJS.sendChatstate(chatState, chatId);
+      return true;
+    },
+    groupId,
+    state,
+  );
+}
+
 async function shutdown(exitCode) {
   if (isShuttingDown) return;
   isShuttingDown = true;
@@ -132,46 +148,48 @@ export async function sendTextToDXGroup(
 ) {
   await clientReady; // Ensure client is ready before sending
 
-  // Ensure we are online before sending
   try {
-    await client.sendPresenceAvailable();
-  } catch {}
+    if (!groupId?.endsWith("@g.us")) {
+      throw new Error(`Invalid WhatsApp group ID: ${groupId}`);
+    }
 
-  if (withTyping) {
+    // Ensure we are online before sending
     try {
-      const chat = await client.getChatById(groupId);
-      await chat.sendStateTyping();
-      // Wait for the requested typing duration
-      await delay(typingDurationMs);
-      // We don't call clearState() here, as sending the message or
-      // calling clearState later is more natural.
-      // WhatsApp often clears it automatically upon message receipt.
+      await client.sendPresenceAvailable();
     } catch {}
-  }
 
-  try {
-    const chat = await client.getChatById(groupId);
-    if (!chat?.isGroup) {
-      throw new Error(`${groupId} resolved, but it is not a group chat.`);
-    }
-
-    const res = await client.sendMessage(chat.id._serialized, message, {
-      sendSeen: false,
-      waitUntilMsgSent: true,
-    });
-
-    if (!res) {
-      throw new Error("sendMessage returned no message object.");
-    }
-
-    // Explicitly clear state after message is sent if it's still there
     if (withTyping) {
       try {
-        await chat.clearState();
+        const typingStarted = await sendChatState(groupId, "typing");
+        if (typingStarted) await delay(typingDurationMs);
       } catch {}
     }
 
+    // Do not call getChatById here. WhatsApp Web currently throws "r: r"
+    // while serializing group metadata (wwebjs issue #201845). sendMessage
+    // resolves the raw chat model without taking that broken code path.
+    let res;
+    try {
+      res = await client.sendMessage(groupId, message, {
+        sendSeen: false,
+        waitUntilMsgSent: true,
+      });
+    } finally {
+      if (withTyping) {
+        try {
+          await sendChatState(groupId, "stop");
+        } catch {}
+      }
+    }
+
     if (pauseAfterMs > 0) await delay(pauseAfterMs);
+    if (!res) {
+      console.warn(
+        "WhatsApp send completed without a message object; delivery acknowledgement is unavailable.",
+      );
+      return true;
+    }
+
     console.log("WhatsApp message sent");
     return res;
   } catch (err) {
