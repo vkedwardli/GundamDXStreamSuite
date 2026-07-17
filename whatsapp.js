@@ -5,6 +5,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { access, unlink } from "node:fs/promises";
 import http from "node:http";
 import { createConnection } from "node:net";
 import path from "node:path";
@@ -109,6 +110,22 @@ function canConnectToSocket(socketPath) {
   });
 }
 
+export async function isSendDelegateAvailable(
+  socketPath,
+  platform = process.platform,
+) {
+  if (platform === "win32") {
+    try {
+      await access(socketPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  return canConnectToSocket(socketPath);
+}
+
 function jidToString(value) {
   if (typeof value === "string") return value;
   if (!value || typeof value !== "object") return "";
@@ -135,11 +152,13 @@ export class WacliClient extends EventEmitter {
   constructor({
     binary = process.env.WACLI_BIN?.trim() || "wacli",
     storeDir = resolveStoreDir(),
+    platform = process.platform,
     allowedGroupIds = [WA_PUBLIC_GROUP_ID, WA_TEST_GROUP_ID],
   } = {}) {
     super();
     this.binary = binary;
     this.storeDir = storeDir;
+    this.platform = platform;
     this.version = null;
     this.ready = false;
     this.allowedGroupIds = new Set(
@@ -599,7 +618,7 @@ export class WacliClient extends EventEmitter {
       !this._destroying &&
       state.connectionGeneration === connectionGeneration
     ) {
-      if (await canConnectToSocket(delegatePath)) {
+      if (await isSendDelegateAvailable(delegatePath, this.platform)) {
         if (
           !state.active ||
           this._destroying ||
@@ -693,10 +712,19 @@ export class WacliClient extends EventEmitter {
     while (!this._destroying) {
       const result = await this._runSyncProcess(firstReady);
       if (this._destroying) return;
+      const recoveredStaleDelegate = await this._recoverStaleWindowsDelegate(
+        result.error,
+      );
 
       if (this.ready) {
         this.ready = false;
         this.emit("disconnected", result.error?.message || "wacli sync stopped");
+      }
+
+      if (recoveredStaleDelegate) {
+        await delay(100);
+        restartDelayMs = 1000;
+        continue;
       }
 
       if (result.error) {
@@ -718,6 +746,44 @@ export class WacliClient extends EventEmitter {
       restartDelayMs = result.connected
         ? 1000
         : Math.min(restartDelayMs * 2, 30000);
+    }
+  }
+
+  async _recoverStaleWindowsDelegate(error) {
+    if (this.platform !== "win32" || !error) return false;
+
+    const delegatePath = path.join(this.storeDir, ".send.sock");
+    const expectedError = `${delegatePath} exists and is not a socket`;
+    if (!error.message?.includes(expectedError)) return false;
+
+    try {
+      await unlink(delegatePath);
+      console.warn(`Removed stale Windows wacli send delegate: ${delegatePath}`);
+      return true;
+    } catch (unlinkError) {
+      if (unlinkError.code === "ENOENT") return true;
+      console.error(
+        `Failed to remove stale Windows wacli send delegate ${delegatePath}:`,
+        unlinkError,
+      );
+      return false;
+    }
+  }
+
+  async _removeWindowsDelegateAfterShutdown() {
+    if (this.platform !== "win32" || this._syncProcess) return false;
+
+    const delegatePath = path.join(this.storeDir, ".send.sock");
+    try {
+      await unlink(delegatePath);
+      return true;
+    } catch (error) {
+      if (error.code === "ENOENT") return false;
+      console.warn(
+        `Failed to clean up Windows wacli send delegate ${delegatePath}:`,
+        error,
+      );
+      return false;
     }
   }
 
@@ -834,6 +900,7 @@ export class WacliClient extends EventEmitter {
     children.forEach((child) => {
       if (child.exitCode == null && child.signalCode == null) child.kill("SIGTERM");
     });
+    await this._removeWindowsDelegateAfterShutdown();
 
     if (this._webhookServer) {
       await new Promise((resolve) => this._webhookServer.close(resolve));
