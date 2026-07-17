@@ -22,6 +22,7 @@ Gundam DX Stream Suite is an automation tool for live streaming "Mobile Suit Gun
 ### Prerequisites
 
 - **Node.js**
+- **[openclaw/wacli](https://github.com/openclaw/wacli) v0.12.0 or newer** (install with `brew install openclaw/tap/wacli` on macOS/Linux, or put the Windows release binary on `PATH`)
 - **FFmpeg** (for video processing)
 - **OBS Studio** with the WebSocket and Aitum Vertical plugin enabled.
 - A **Google Cloud Project** with the YouTube Data API enabled to allow the tool to manage your streams.
@@ -40,7 +41,11 @@ Gundam DX Stream Suite is an automation tool for live streaming "Mobile Suit Gun
 3.  **Configure:**
     - Create a `.env` file by copying from `.env.example`.
     - Fill in your details, such as Google API credentials and your OBS WebSocket password.
-4.  **Authorize with YouTube:**
+4.  **Authorize and test WhatsApp:**
+    - Set `WA_TEST_GROUP_ID`, then run `npm run test:whatsapp`.
+    - Scan the QR code from WhatsApp > Linked Devices when prompted. The test uses an isolated `.wacli/session-diagnostic-test` store and sends only to the testing group.
+    - Outbound WhatsApp calls are allowlisted to `WA_PUBLIC_GROUP_ID` and `WA_TEST_GROUP_ID`; direct/new recipients and other groups are rejected.
+5.  **Authorize with YouTube:**
     - Run the app for the first time: `node index.js`.
     - Follow the on-screen link to log in with your Google account and allow access. A `token.json` file will be saved for future use.
 
