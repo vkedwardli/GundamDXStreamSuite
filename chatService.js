@@ -34,6 +34,23 @@ function undoModerationFilters(text) {
   return originalText;
 }
 
+function normalizeYouTubeTimestamp(timestamp) {
+  const numericTimestamp =
+    timestamp instanceof Date ? timestamp.getTime() : Number(timestamp);
+
+  if (Number.isFinite(numericTimestamp)) {
+    // YouTube internal timestamps can be Unix microseconds (16 digits).
+    // JavaScript Date expects milliseconds.
+    const milliseconds =
+      numericTimestamp > 10000000000000
+        ? Math.floor(numericTimestamp / 1000)
+        : numericTimestamp;
+    return new Date(milliseconds);
+  }
+
+  return new Date(timestamp);
+}
+
 function processChatMessage(chatItem, faction, io) {
   const msg = createMessage({
     isFederation: faction === Faction.FEDERATION,
@@ -56,8 +73,16 @@ function processChatMessage(chatItem, faction, io) {
             (item.alt.startsWith(":") ? item.alt : `:${item.alt}:`),
       )
       .join(""),
-    timestamp: new Date(chatItem.timestamp),
+    timestamp: normalizeYouTubeTimestamp(chatItem.timestamp),
   });
+
+  // youtube-chat replays recent messages when it reconnects to an existing
+  // broadcast. Drop messages from the previous Node.js session before they
+  // reach the log, OBS overlay, TTS, or WhatsApp forwarding.
+  const messageTime = msg.timestamp?.getTime();
+  if (Number.isFinite(messageTime) && messageTime < serviceStartTime) {
+    return;
+  }
 
   io.emit("chatlog", `${msg.authorName}: ${msg.plainMessage}`);
 
@@ -194,21 +219,6 @@ function processChatMessage(chatItem, faction, io) {
 
   // NOW we emit the final version with the icon to the chat box
   io.emit("message", msg);
-
-  // Guard: Only perform TTS and WhatsApp forwarding for messages sent after the service started
-  if (msg.timestamp) {
-    let msgTime = msg.timestamp.getTime();
-
-    // YouTube internal timestamps are sometimes in microseconds (16 digits).
-    // Convert to milliseconds if detected.
-    if (msgTime > 10000000000000) {
-      msgTime = Math.floor(msgTime / 1000);
-    }
-
-    if (msgTime < serviceStartTime) {
-      return;
-    }
-  }
 
   if (ttsText && currentMegaphoneState.enabled) {
     textToSpeech({
