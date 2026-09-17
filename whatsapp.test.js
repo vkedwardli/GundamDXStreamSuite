@@ -87,6 +87,46 @@ test("does not re-emit outgoing, edited, revoked, or duplicate live events", () 
   assert.equal(messages, 1);
 });
 
+test("does not let a provisional empty event consume the completed text payload", () => {
+  const client = testClient();
+  const bodies = [];
+  client.on("message", (message) => {
+    bodies.push(message.body);
+  });
+  const base = {
+    Chat: TEST_GROUP_ID,
+    ID: "hydrated-message-id",
+    SenderJID: "85290000000@s.whatsapp.net",
+  };
+
+  client._handleWebhookMessage({ ...base, Text: "" });
+  client._handleWebhookMessage({ ...base, Text: "" });
+  client._handleWebhookMessage({ ...base, Text: "!zeon 今日應該都有" });
+  client._handleWebhookMessage({ ...base, Text: "!zeon 今日應該都有" });
+
+  assert.deepEqual(bodies, ["!zeon 今日應該都有"]);
+});
+
+test("allows a media-only event to be enriched with text once", () => {
+  const client = testClient();
+  const bodies = [];
+  client.on("message", (message) => {
+    bodies.push(message.body);
+  });
+  const base = {
+    Chat: TEST_GROUP_ID,
+    ID: "media-message-id",
+    SenderJID: "85290000000@s.whatsapp.net",
+    Media: { Type: "image" },
+  };
+
+  client._handleWebhookMessage({ ...base, Text: "" });
+  client._handleWebhookMessage({ ...base, Text: "!fed caption" });
+  client._handleWebhookMessage({ ...base, Text: "!fed caption" });
+
+  assert.deepEqual(bodies, ["", "!fed caption"]);
+});
+
 test("delegates sends and replies to wacli while preserving ACK shape", async () => {
   const client = testClient();
   client.waitUntilReady = async () => {};
@@ -140,6 +180,103 @@ test("rejects direct recipients and unconfigured groups before invoking wacli", 
     client.sendMessage("120363999999999999@g.us", "hello"),
     /is not an allowed target/,
   );
+});
+
+test("retries a locked first stream announcement before sending the second link", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const client = testClient();
+  let readinessChecks = 0;
+  client.waitUntilReady = async () => { readinessChecks += 1; };
+  const commands = [];
+  const acknowledgements = [];
+  client.on("message_ack", (message) => acknowledgements.push(message.body));
+  client._runJSON = async (args) => {
+    commands.push(args);
+    if (commands.length <= 2) {
+      throw new Error('wacli send text failed (exit 1). {"success":false,"error":"store is locked (another wacli is running?)"}');
+    }
+    return { sent: true, id: `message-${commands.length}` };
+  };
+  const links = ["https://youtu.be/federation", "https://youtu.be/zeon"];
+  const sending = (async () => {
+    for (const link of links) await client.sendMessage(TEST_GROUP_ID, link);
+  })();
+
+  await new Promise(setImmediate);
+  assert.equal(commands.length, 1);
+  t.mock.timers.tick(1000);
+  await new Promise(setImmediate);
+  assert.equal(commands.length, 2);
+  t.mock.timers.tick(2000);
+  await sending;
+
+  assert.equal(commands.length, 4);
+  assert.deepEqual(commands[0], commands[1]);
+  assert.deepEqual(commands[1], commands[2]);
+  assert.deepEqual(acknowledgements, links);
+  assert.equal(readinessChecks, 4);
+});
+
+test("stops retrying persistent store locks and reports failure without an ACK", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const client = testClient();
+  client.waitUntilReady = async () => {};
+  let attempts = 0;
+  let acknowledgements = 0;
+  client.on("message_ack", () => { acknowledgements += 1; });
+  client._runJSON = async () => {
+    attempts += 1;
+    throw new Error("store is locked (another wacli is running?)");
+  };
+  const rejected = assert.rejects(
+    client.sendMessage(TEST_GROUP_ID, "stream link"),
+    /store is locked/,
+  );
+
+  for (const retryDelay of [1000, 2000, 4000, 8000, 8000]) {
+    await new Promise(setImmediate);
+    t.mock.timers.tick(retryDelay);
+  }
+  await rejected;
+  assert.equal(attempts, 6);
+  assert.equal(acknowledgements, 0);
+});
+
+test("does not retry ambiguous send failures that could duplicate a delivered message", async () => {
+  const client = testClient();
+  client.waitUntilReady = async () => {};
+  let attempts = 0;
+  client._runJSON = async () => {
+    attempts += 1;
+    throw new Error("connection closed while waiting for acknowledgement");
+  };
+
+  await assert.rejects(
+    client.sendMessage(TEST_GROUP_ID, "stream link"),
+    /connection closed/,
+  );
+  assert.equal(attempts, 1);
+});
+
+test("shutdown cancels a pending store-lock retry", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const client = testClient();
+  client.waitUntilReady = async () => {};
+  let attempts = 0;
+  client._runJSON = async () => {
+    attempts += 1;
+    throw new Error("store is locked");
+  };
+  const rejected = assert.rejects(
+    client.sendMessage(TEST_GROUP_ID, "stream link"),
+    /client was closed/,
+  );
+
+  await new Promise(setImmediate);
+  await client.destroy();
+  t.mock.timers.tick(1000);
+  await rejected;
+  assert.equal(attempts, 1);
 });
 
 test("restores ready state after a wacli disconnect and reconnect", async () => {
@@ -274,3 +411,72 @@ function postWebhook(url, body, signature) {
     request.end(body);
   });
 }
+
+test("webhook acknowledgement waits for durable receipt and failed receipts can be redelivered", async (t) => {
+  const client = testClient();
+  await client._startWebhookServer();
+  t.after(() => client.destroy());
+  const payload = Buffer.from(JSON.stringify({
+    Chat: TEST_GROUP_ID, ID: "durable-id", Text: "!say hello",
+    SenderJID: "sender@s.whatsapp.net",
+  }));
+  const signature = `sha256=${createHmac("sha256", client._webhookSecret).update(payload).digest("hex")}`;
+  let emitted = 0;
+  client.on("message", () => { emitted += 1; });
+  client.setMessageHandler(async () => { throw new Error("disk full"); });
+  assert.equal(await postWebhook(client._webhookURL, payload, signature), 503);
+  assert.equal(emitted, 0);
+
+  let persist;
+  let started;
+  const handlerStarted = new Promise((resolve) => { started = resolve; });
+  client.setMessageHandler(() => new Promise((resolve) => {
+    persist = resolve;
+    started();
+  }));
+  let acknowledged = false;
+  const posting = postWebhook(client._webhookURL, payload, signature).then((status) => {
+    acknowledged = true;
+    return status;
+  });
+  await handlerStarted;
+  await new Promise(setImmediate);
+  assert.equal(acknowledged, false);
+  assert.equal(emitted, 0);
+  persist();
+  assert.equal(await posting, 204);
+  assert.equal(emitted, 1);
+});
+
+test("initial sync network failures recover without an outgoing message", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const client = testClient();
+  const errors = [];
+  client.on("error", (error) => errors.push(error));
+  client._authStatus = async () => ({ authenticated: true });
+  let attempts = 0;
+  const firstReady = { settled: false };
+  client._runSyncProcess = async () => {
+    if (++attempts === 1) return { connected: false, error: new Error("DNS lookup failed") };
+    client._destroying = true; // End the simulated loop once a second connection is attempted.
+    return { connected: true, error: null };
+  };
+  const syncing = client._runSyncLoop(firstReady);
+  await new Promise(setImmediate);
+  assert.equal(attempts, 1);
+  t.mock.timers.tick(1000);
+  await syncing;
+  assert.equal(attempts, 2);
+  assert.equal(errors.length, 1);
+  assert.equal(firstReady.settled, false);
+});
+
+test("send readiness timeout includes the initial connection wait", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const client = testClient();
+  client.initialize = () => new Promise(() => {});
+  const rejected = assert.rejects(client.waitUntilReady(1000), /send timeout/);
+  t.mock.timers.tick(1000);
+  await rejected;
+  assert.equal(client.listenerCount("ready"), 0);
+});

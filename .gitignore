@@ -2,6 +2,7 @@
 .wwebjs_auth
 .wwebjs_cache
 .wacli/
+**/youtube-outbox/
 
 # Google API token
 token.json

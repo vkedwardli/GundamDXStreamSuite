@@ -2,6 +2,7 @@ import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import fs from "fs/promises";
 import { scheduler } from "node:timers/promises";
+import { createYouTubeChatSender } from "./youtubeChatDelivery.js";
 import {
   CLIENT_ID,
   CLIENT_SECRET,
@@ -308,10 +309,10 @@ export async function getViewerCount(videoId) {
   }
 }
 
-const liveChatIdCache = new Map();
+const liveChatSender = createYouTubeChatSender(youtube, { transformText: applyModerationFilters });
 
 export function clearLiveChatCache() {
-  liveChatIdCache.clear();
+  liveChatSender.clearCache();
   console.log("YouTube live chat ID cache cleared.");
 }
 
@@ -325,46 +326,7 @@ function applyModerationFilters(text) {
 }
 
 export async function sendLiveChatMessage(videoId, message) {
-  try {
-    let liveChatId = liveChatIdCache.get(videoId);
-
-    if (!liveChatId) {
-      const videoResponse = await youtube.videos.list({
-        part: ["liveStreamingDetails"],
-        id: videoId,
-      });
-
-      liveChatId =
-        videoResponse.data.items[0]?.liveStreamingDetails?.activeLiveChatId;
-
-      if (liveChatId) {
-        liveChatIdCache.set(videoId, liveChatId);
-      }
-    }
-
-    if (!liveChatId) {
-      console.error(`No active live chat found for video ${videoId}`);
-      return;
-    }
-
-    // Bypass YouTube auto-moderation
-    const safeMessage = applyModerationFilters(message);
-
-    // 2. Insert the message
-    await youtube.liveChatMessages.insert({
-      part: ["snippet"],
-      resource: {
-        snippet: {
-          liveChatId: liveChatId,
-          type: "textMessageEvent",
-          textMessageDetails: {
-            messageText: safeMessage,
-          },
-        },
-      },
-    });
-    console.log(`Sent message to YouTube (${videoId}): ${safeMessage}`);
-  } catch (error) {
-    console.error(`Error sending YouTube live chat message:`, error.message);
-  }
+  const result = await liveChatSender.send(videoId, message);
+  console.log(`YouTube accepted comment ${result.id} (${videoId}): ${message}`);
+  return result;
 }

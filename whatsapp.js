@@ -21,6 +21,7 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 5 * 60 * 1000;
 const READY_WAIT_TIMEOUT_MS = 60 * 1000;
 const MAX_WEBHOOK_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_SEEN_MESSAGES = 5000;
+const MAX_SEND_ATTEMPTS = 6;
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -177,6 +178,18 @@ export class WacliClient extends EventEmitter {
     this._firstReady = null;
     this._destroying = false;
     this._seenMessages = new Map();
+    this._messageHandler = null;
+    this._shutdownHandler = null;
+  }
+
+  // The application installs its durable receiver synchronously at startup.
+  // Its promise must settle before acknowledging an incoming webhook.
+  setMessageHandler(handler) {
+    this._messageHandler = handler;
+  }
+
+  setShutdownHandler(handler) {
+    this._shutdownHandler = handler;
   }
 
   async initialize() {
@@ -450,7 +463,7 @@ export class WacliClient extends EventEmitter {
         }
         chunks.push(chunk);
       });
-      request.on("end", () => {
+      request.on("end", async () => {
         if (tooLarge) {
           response.writeHead(413).end();
           return;
@@ -470,8 +483,13 @@ export class WacliClient extends EventEmitter {
           return;
         }
 
-        response.writeHead(204).end();
-        setImmediate(() => this._handleWebhookMessage(payload));
+        try {
+          await this._handleWebhookMessage(payload);
+          response.writeHead(204).end();
+        } catch (error) {
+          console.error("Failed to persist incoming WhatsApp message:", error);
+          response.writeHead(503).end();
+        }
       });
       request.on("error", (error) => this.emit("error", error));
     });
@@ -511,9 +529,18 @@ export class WacliClient extends EventEmitter {
     );
   }
 
-  _rememberMessage(key) {
-    if (this._seenMessages.has(key)) return false;
-    this._seenMessages.set(key, Date.now());
+  _rememberMessage(key, hasText) {
+    if (this._seenMessages.has(key)) {
+      const previousHadText = this._seenMessages.get(key);
+      if (previousHadText || !hasText) return false;
+
+      // wacli can emit a metadata-only event before the same message is
+      // hydrated with text. Allow that completed payload through once.
+      this._seenMessages.set(key, true);
+      return true;
+    }
+
+    this._seenMessages.set(key, hasText);
     if (this._seenMessages.size > MAX_SEEN_MESSAGES) {
       const oldest = this._seenMessages.keys().next().value;
       this._seenMessages.delete(oldest);
@@ -525,6 +552,7 @@ export class WacliClient extends EventEmitter {
     const from = jidToString(payload?.Chat);
     const messageId = String(payload?.ID ?? "").trim();
     const senderJID = String(payload?.SenderJID ?? "").trim();
+    const messageText = String(payload?.Text ?? "");
 
     if (
       !from ||
@@ -538,18 +566,25 @@ export class WacliClient extends EventEmitter {
     ) {
       return;
     }
-    if (!this._rememberMessage(`${from}:${messageId}`)) return;
+
+    const hasText = messageText.trim().length > 0;
+    const hasMedia = Boolean(payload?.Media);
+
+    // Ignore provisional payloads that contain no usable message content.
+    // Crucially, do not mark their IDs as seen: wacli may shortly deliver
+    // the same ID again with the decoded text populated.
+    if (!hasText && !hasMedia) return;
 
     const message = {
       id: { _serialized: messageId },
       from,
       fromMe: false,
       author: senderJID,
-      body: String(payload?.Text ?? ""),
+      body: messageText,
       timestamp: Math.floor(
         (Date.parse(payload?.Timestamp) || Date.now()) / 1000,
       ),
-      hasMedia: Boolean(payload?.Media),
+      hasMedia,
       type: payload?.Media?.Type || "chat",
       reply: (text) =>
         this.sendMessage(from, text, {
@@ -563,7 +598,15 @@ export class WacliClient extends EventEmitter {
       getChat: () => this.getChatById(from),
     };
 
-    this.emit("message", message);
+    const deliver = () => {
+      if (this._rememberMessage(`${from}:${messageId}`, hasText)) {
+        this.emit("message", message);
+      }
+    };
+    if (this._messageHandler) {
+      return Promise.resolve(this._messageHandler(message)).then(deliver);
+    }
+    deliver();
   }
 
   _handleSyncEvent(event, state, firstReady) {
@@ -728,10 +771,8 @@ export class WacliClient extends EventEmitter {
       }
 
       if (result.error) {
-        if (!result.connected && !firstReady.settled) {
-          settleDeferred(firstReady, "reject", result.error);
-          return;
-        }
+        // Keep receiving even if the network was unavailable at startup.
+        // Outgoing messages must not be needed to restart the sync loop.
         this.emit("error", result.error);
       }
 
@@ -788,7 +829,7 @@ export class WacliClient extends EventEmitter {
   }
 
   async waitUntilReady(timeoutMs = READY_WAIT_TIMEOUT_MS) {
-    await this.initialize();
+    if (this._destroying) throw new Error("WhatsApp client was closed.");
     if (this.ready) return;
 
     await new Promise((resolve, reject) => {
@@ -800,12 +841,18 @@ export class WacliClient extends EventEmitter {
         cleanup();
         resolve();
       };
+      const onError = (error) => {
+        cleanup();
+        reject(error);
+      };
       const cleanup = () => {
         clearTimeout(timeout);
         this.off("ready", onReady);
       };
       this.on("ready", onReady);
-      if (this.ready) onReady();
+      this.initialize().then(() => {
+        if (this.ready) onReady();
+      }, onError);
     });
   }
 
@@ -820,20 +867,46 @@ export class WacliClient extends EventEmitter {
     return normalized;
   }
 
+  async _sendTextWithRetry(args) {
+    for (let attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt += 1) {
+      await this.waitUntilReady();
+      try {
+        return await this._runJSON(args, { description: "send text" });
+      } catch (error) {
+        // A store-lock rejection happens before wacli can send the message.
+        // Other failures may occur after delivery, so do not retry those.
+        if (
+          !/\bstore is locked\b/i.test(error.message ?? "") ||
+          attempt === MAX_SEND_ATTEMPTS ||
+          this._destroying
+        ) {
+          throw error;
+        }
+        const retryDelayMs = Math.min(1000 * 2 ** (attempt - 1), 8000);
+        console.warn(
+          `WhatsApp store is locked; retrying message in ${retryDelayMs / 1000}s (attempt ${attempt + 1}/${MAX_SEND_ATTEMPTS}).`,
+        );
+        await delay(retryDelayMs);
+        if (this._destroying) {
+          throw new Error("WhatsApp client was closed before the message could be sent.");
+        }
+      }
+    }
+  }
+
   async sendMessage(to, text, options = {}) {
     const groupId = this._assertAllowedGroup(to);
     if (text == null || String(text).length === 0) {
       throw new Error("A WhatsApp message is required.");
     }
 
-    await this.waitUntilReady();
     const args = ["send", "text", "--to", groupId, "--message", String(text)];
     if (options.replyTo) args.push("--reply-to", String(options.replyTo));
     if (options.replyToSender) {
       args.push("--reply-to-sender", String(options.replyToSender));
     }
 
-    const sent = await this._runJSON(args, { description: "send text" });
+    const sent = await this._sendTextWithRetry(args);
     if (!sent?.sent || !sent?.id) {
       throw new Error("wacli did not return a WhatsApp message ID.");
     }
@@ -886,6 +959,11 @@ export class WacliClient extends EventEmitter {
     if (this._destroying) return;
     this._destroying = true;
     this.ready = false;
+    try {
+      await this._shutdownHandler?.();
+    } catch (error) {
+      console.error("Failed to finish WhatsApp message processing during shutdown:", error);
+    }
     settleDeferred(
       this._firstReady,
       "reject",
@@ -978,7 +1056,7 @@ export async function sendTextToDXGroup(
   } = {},
 ) {
   try {
-    await ensureClientReady();
+    await client.waitUntilReady();
 
     if (!groupId?.endsWith("@g.us")) {
       throw new Error(`Invalid WhatsApp group ID: ${groupId}`);

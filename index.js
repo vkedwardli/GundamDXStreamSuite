@@ -1,5 +1,7 @@
 import { scheduler } from "node:timers/promises";
 import schedule from "node-schedule";
+import path from "node:path";
+import { WhatsAppYouTubeBridge } from "./whatsappYouTubeBridge.js";
 
 // Configuration and Constants
 import { Faction, Megaphone, TTSModel } from "./config.js";
@@ -14,6 +16,7 @@ import {
   deleteLiveBroadcasts,
   sendLiveChatMessage,
   clearLiveChatCache,
+  oAuth2Client,
 } from "./youtubeService.js";
 import {
   obs, // direct obs instance for some specific calls if needed outside service
@@ -63,6 +66,24 @@ let megaphoneState = Megaphone.ENABLED;
 let blockStartStreamingUntil = 0;
 let currentBroadcastIds = []; // To store IDs of current streams
 let currentStreamType = null; // 'public' or 'unlisted'
+
+const whatsappYouTubeBridge = new WhatsAppYouTubeBridge({
+  directory: path.join(whatsappClient.storeDir, "youtube-outbox"),
+  publicGroupId: WA_PUBLIC_GROUP_ID,
+  testGroupId: WA_TEST_GROUP_ID,
+  getStreamState: () => ({ broadcastIds: currentBroadcastIds, streamType: currentStreamType }),
+  send: sendLiveChatMessage,
+  notify: (groupId, text, options) => whatsappClient.sendMessage(groupId, text, options),
+  canNotify: () => whatsappClient.ready,
+  canSend: () => Boolean(oAuth2Client.credentials.access_token || oAuth2Client.credentials.refresh_token),
+});
+// Install before any awaited startup work, so early webhooks are saved too.
+whatsappClient.setMessageHandler((message) => whatsappYouTubeBridge.accept(message));
+whatsappClient.setShutdownHandler(() => whatsappYouTubeBridge.close());
+internalEvents.on("youtubeChatMessageObserved", (id) => {
+  whatsappYouTubeBridge.observe(id).catch((error) =>
+    console.error("Failed to record YouTube comment observation:", error));
+});
 
 // --- Socket.IO Client Connection Handler ---
 // This function will be passed to setupServer
@@ -170,7 +191,11 @@ function handleClientConnection(client, io) {
 async function sendToFederationLiveChat(message) {
   if (currentBroadcastIds.length > 0) {
     console.log(`Sending to Federation YouTube stream: ${message}`);
-    await sendLiveChatMessage(currentBroadcastIds[0], message);
+    try {
+      await sendLiveChatMessage(currentBroadcastIds[0], message);
+    } catch (error) {
+      console.error(`YouTube comment ${error.outcome || "failed"}:`, error.message);
+    }
   }
 }
 
@@ -259,12 +284,17 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
             ? WA_PUBLIC_GROUP_ID
             : WA_TEST_GROUP_ID;
           for (const id of broadcastIds) {
-            await sendTextToDXGroup(`https://youtu.be/${id}`, {
+            const announcement = await sendTextToDXGroup(`https://youtu.be/${id}`, {
               withTyping: true,
               typingDurationMs: getRandomDelay(1200, 2000), // Shorter "pasting" time
               pauseAfterMs: getRandomDelay(800, 1200), // Quick safety pause
               groupId: targetGroupId,
             });
+            if (announcement) {
+              console.log(`WhatsApp stream announcement sent: https://youtu.be/${id}`);
+            } else {
+              console.error(`WhatsApp stream announcement failed: https://youtu.be/${id}`);
+            }
             // Snappier delay between the two messages
             if (broadcastIds.indexOf(id) === 0) {
               await new Promise((resolve) =>
@@ -435,101 +465,20 @@ schedule.scheduleJob("10 2 * * *", async () => {
 
 // --- Main Application ---
 async function main() {
-  setupServer(handleClientConnection); // Setup server, io instance will be set in serverSetup.js
+  const { server } = setupServer(handleClientConnection);
+  // Establish single-server ownership before opening the forwarding journal.
+  // A second process must exit on a port conflict instead of draining it too.
+  await new Promise((resolve, reject) => {
+    server.once("listening", resolve);
+    server.once("error", reject);
+  });
 
+  await whatsappYouTubeBridge.initialize();
   await authorizeYouTube();
+  whatsappYouTubeBridge.start();
   await startDXOPScreen();
   await connectSpeaker("HK Onyx Studio", "0C:A6:94:08:F6:A1");
   startTimeAnnouncer();
-
-  // WhatsApp command handler for forwarding messages to YouTube Live Chat
-  whatsappClient.on("message", async (msg) => {
-    // 1. Guard: Only process messages from the allowed groups
-    const isPublicGroup = msg.from === WA_PUBLIC_GROUP_ID;
-    const isTestGroup = msg.from === WA_TEST_GROUP_ID;
-    if (!isPublicGroup && !isTestGroup) return;
-
-    // 2. Guard: Only process if it starts with the expected commands
-    const body = msg.body.trim();
-    const ttsCommandRegex = /^[!！]([mu]?say|[mu]?gossip|[mu]?anchor)\b/i;
-    const isFedCommand = body.startsWith("!fed ") || body.startsWith("！fed ");
-    const isZeonCommand =
-      body.startsWith("!zeon ") || body.startsWith("！zeon ");
-    const hasExplicitTarget =
-      isFedCommand || isZeonCommand;
-    const isBareTTS = ttsCommandRegex.test(body);
-
-    if (!hasExplicitTarget && !isBareTTS) return;
-
-    const offlineResponses = [
-      "東主有喜，暫停直播。",
-      "噢~噢噢噢~噢噢噢~ 我俾碌蕉你含~",
-      "朋友，你返去印度食蕉啦",
-      "邊撚個chok到呢句出嚟，就輸一蚊",
-      "由於節目調動嘅關係，原定播映嘅龍珠二世將會暫停播映，敬請留意。",
-      "你嗌破喉嚨都冇人理你㗎喇！哈哈哈哈哈哈哈哈~",
-    ];
-
-    const sendOfflineReply = async () => {
-      const randomMsg =
-        offlineResponses[Math.floor(Math.random() * offlineResponses.length)];
-      await msg.reply(randomMsg);
-    };
-
-    // 3. Guard: If no active streams are found, send funny offline response
-    if (currentBroadcastIds.length !== 2) {
-      await sendOfflineReply();
-      return;
-    }
-
-    // 4. Guard: Ensure the group matches the current stream visibility
-    if (
-      (currentStreamType === "public" && !isPublicGroup) ||
-      (currentStreamType === "unlisted" && !isTestGroup)
-    ) {
-      return;
-    }
-
-    let targetVideoId = null;
-    let messageContent = "";
-
-    if (isFedCommand) {
-      targetVideoId = currentBroadcastIds[0];
-      messageContent = body.slice(5).trim();
-    } else if (isZeonCommand) {
-      targetVideoId = currentBroadcastIds[1];
-      messageContent = body.slice(6).trim();
-    } else if (isBareTTS) {
-      targetVideoId = currentBroadcastIds[0];
-      messageContent = body;
-    }
-
-    if (targetVideoId && messageContent) {
-      try {
-        const contact = await msg.getContact();
-        // Use only pushname to avoid exposing phone numbers. Fallback to a generic name if missing.
-        const senderName = contact.pushname || "神秘人";
-
-        // Check if message starts with any of the TTS command variants
-        const isTTS = ttsCommandRegex.test(messageContent);
-
-        if (isTTS) {
-          // Send a single combined message: "!gossip Hello !:Edward Li"
-          await sendLiveChatMessage(
-            targetVideoId,
-            `${messageContent} !:${senderName}`,
-          );
-        } else {
-          await sendLiveChatMessage(
-            targetVideoId,
-            `💬${senderName}: ${messageContent}`,
-          );
-        }
-      } catch (error) {
-        console.error("Error processing WhatsApp to YouTube command:", error);
-      }
-    }
-  });
 
   // Example: For testing lofi mode directly on start (usually triggered by client)
   // lofiTest(io);

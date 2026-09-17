@@ -5,6 +5,7 @@ import { textToSpeech } from "./ttsService.js";
 import { getViewerCount } from "./youtubeService.js"; // For viewer count updates
 import { getRandomDelay } from "./systemUtils.js";
 import { createMessage } from "./messageService.js";
+import { internalEvents } from "./serverSetup.js";
 import {
   sendTextToDXGroup,
   WA_TEST_GROUP_ID,
@@ -52,6 +53,8 @@ function normalizeYouTubeTimestamp(timestamp) {
 }
 
 function processChatMessage(chatItem, faction, io) {
+  // Report exact IDs even for replayed comments, before the overlay's cutoff.
+  internalEvents.emit("youtubeChatMessageObserved", chatItem.id);
   const msg = createMessage({
     isFederation: faction === Faction.FEDERATION,
     authorName: chatItem.author.name,
