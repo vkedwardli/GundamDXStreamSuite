@@ -31,21 +31,25 @@ function preprocessAzureText(inputText, voiceID) {
 
   // Cantonese (zh-HK) specific replacements
   if (voiceID.startsWith("zh-HK")) {
+    // Match standalone/Chinese-adjacent "lo", without changing English words.
+    // Apply before phonetic substitutions below introduce English letters.
+    processedText = processedText.replace(/(?<![a-z])lo(?![a-z])/gi, "嚕");
     // Order matters for some replacements to avoid conflicts
     processedText = processedText.replace(/usus/g, "呃suz"); // Must be before other 'us' if any
-    processedText = processedText.replace(/[鳩𨳊]/g, "朻");
+    processedText = processedText.replace(/[尻鳩𨳊]/gu, "朻");
     processedText = processedText.replace(/[閪屄]/g, "溪");
     processedText = processedText.replace(/𨶙/g, "撚");
     processedText = processedText.replace(/[柒𨳍]/g, "chaat");
     processedText = processedText.replace(/仆/g, "poke");
     processedText = processedText.replace(/矇/g, "mown");
     processedText = processedText.replace(/咁/g, "感");
+    processedText = processedText.replace(/撈/g, "嚕");
   }
 
   // Mandarin (zh-CN) specific replacements
   if (voiceID.startsWith("zh-CN")) {
-    processedText = processedText.replace(/[撚𨶙]/g, "能");
-    processedText = processedText.replace(/[鳩𨳊]/g, "夠");
+    processedText = processedText.replace(/[撚𨶙]/gu, "能");
+    processedText = processedText.replace(/[尻鳩𨳊]/gu, "夠");
     processedText = processedText.replace(/[閪屄]/g, "嗨");
   }
 
