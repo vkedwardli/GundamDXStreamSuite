@@ -30,6 +30,25 @@ export function parseWhatsAppCommand(body) {
   };
 }
 
+function observationKey(id) {
+  if (typeof id !== "string") return id;
+  const apiId = id.startsWith("LCC.");
+  const encoded = apiId ? id.slice(4) : id;
+  if (!/^[A-Za-z0-9_-]+={0,2}$/.test(encoded)) return id;
+
+  // Captured IDs wrap the same message key in different protobuf envelopes:
+  // API: LCC.base64url(field 2 { field 1: key }); reader:
+  // base64url(field 1 { field 1: key }). Only unwrap these exact short-field
+  // layouts; raw keys and unfamiliar formats keep their original value.
+  const bytes = Buffer.from(encoded, "base64url");
+  if (bytes.toString("base64url") !== encoded.replace(/=+$/, "") ||
+    bytes.length < 5 || bytes[0] !== (apiId ? 0x12 : 0x0a) || bytes[2] !== 0x0a ||
+    bytes[1] >= 0x80 || bytes[1] !== bytes.length - 2 ||
+    bytes[3] >= 0x80 || bytes[3] !== bytes.length - 4) return id;
+  const messageKey = bytes.subarray(4).toString("utf8");
+  return /^[A-Za-z0-9_-]+$/.test(messageKey) ? messageKey : id;
+}
+
 // One server owns this journal. Receipt/state writes are serialized and replace
 // the journal atomically; HTTP acknowledgement happens only after fsync/rename.
 export class WhatsAppYouTubeBridge {
@@ -252,7 +271,7 @@ export class WhatsAppYouTubeBridge {
   async _tick() {
     await this.initialize();
     for (const record of this.records) {
-      if (record.status === "submitted" && this._observedIds.has(record.youtubeId)) {
+      if (record.status === "submitted" && this._observedIds.has(observationKey(record.youtubeId))) {
         await this._update(record.key, { status: "observed", reason: null }, ["submitted", "unconfirmed"]);
       } else if (record.status === "submitted" && this.now() - record.updatedAt >= this.confirmationMs) {
         await this._update(record.key, { status: "unconfirmed", reason: "notObservedInChat; possibleModerationOrPollingGap" }, ["submitted"]);
@@ -306,7 +325,7 @@ export class WhatsAppYouTubeBridge {
       });
     } else {
       await this._update(record.key, {
-        status: this._observedIds.has(result.id) ? "observed" : "submitted",
+        status: this._observedIds.has(observationKey(result.id)) ? "observed" : "submitted",
         youtubeId: result.id,
       });
     }
@@ -314,17 +333,18 @@ export class WhatsAppYouTubeBridge {
 
   async observe(youtubeId) {
     if (!youtubeId) return;
-    this._observedIds.add(youtubeId);
+    const key = observationKey(youtubeId);
+    this._observedIds.add(key);
     if (this._observedIds.size > 5000) this._observedIds.delete(this._observedIds.values().next().value);
     await this.initialize();
-    const record = this.records.find((item) => item.youtubeId === youtubeId &&
+    const record = this.records.find((item) => observationKey(item.youtubeId) === key &&
       ["submitted", "unconfirmed"].includes(item.status));
     if (record) await this._update(record.key, { status: "observed", reason: null }, ["submitted", "unconfirmed"]);
   }
 
   _notificationText(record) {
     if (record.status === "offline") return record.offlineReply;
-    if (record.status === "unconfirmed" && !this._observedIds.has(record.youtubeId)) {
+    if (record.status === "unconfirmed" && !this._observedIds.has(observationKey(record.youtubeId))) {
       return "⚠️ 呢條指令嘅留言暫時未喺 YouTube 直播聊天室出現，可能被 YouTube 審核攔截，亦可能係聊天室同步延遲。系統唔會自動重發。";
     }
     if (record.status !== "rejected") return null;

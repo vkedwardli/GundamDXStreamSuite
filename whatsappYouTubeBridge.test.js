@@ -130,6 +130,137 @@ test("an observation arriving before the insert response is retained", async (t)
   assert.equal((await f.stored())[0].status, "observed");
 });
 
+// First pair captured from BOTH the API and reader in the 18 September 14:50
+// diagnostic log. The other pairs retain coverage for raw inner-ID compatibility;
+// those raw IDs were decoded locally, not captured from the production reader.
+const capturedMessageIds = [
+  ["LCC.EhwKGkNMZkUzbzNGOTVZREZTNzM1d01kNm1BY3RB", "ChwKGkNMZkUzbzNGOTVZREZTNzM1d01kNm1BY3RB"],
+  ["LCC.EhwKGkNPNzczTmZBOTVZREZVRTFkZ1lkUTdZZEpR", "CO773NfA95YDFUE1dgYdQ7YdJQ"],
+  ["LCC.EhwKGkNOMzlzX0xBOTVZREZXYkh3Z1FkUl9nZ2lR", "CN39s_LA95YDFWbHwgQdR_ggiQ"],
+];
+
+for (const [apiId, chatId] of capturedMessageIds) {
+  for (const early of [false, true]) {
+    test(`LCC confirmation suppresses false warnings (${chatId}, observation ${early ? "before" : "after"} API response)`, async (t) => {
+      const notices = [];
+      let attempts = 0;
+      const f = await fixture(t, {
+        send: async () => {
+          attempts++;
+          if (early) await f.bridge.observe(chatId);
+          return { id: apiId };
+        },
+        notify: async (...args) => { notices.push(args); return { id: { _serialized: "notice" } }; },
+      });
+      f.setStream({ broadcastIds: ["fed-video", "zeon-video"], streamType: "unlisted" });
+      await f.bridge.accept(f.message("command", "!gossip testing", TEST));
+      await f.bridge.tick();
+      if (!early) await f.bridge.observe(chatId);
+      f.advance(90001);
+      await f.bridge.tick();
+      await f.bridge.notifyPending();
+      const record = (await f.stored())[0];
+      assert.equal(record.status, "observed");
+      assert.equal(record.youtubeId, apiId, "keep the original API ID in the journal");
+      assert.equal(attempts, 1);
+      assert.equal(notices.length, 0);
+    });
+  }
+}
+
+test("a replayed renderer ID confirms a saved LCC record and cancels a pending warning after restart", async (t) => {
+  const [apiId, chatId] = capturedMessageIds[0];
+  let notices = 0;
+  const f = await fixture(t, {
+    send: async () => ({ id: apiId }),
+    notify: async () => { notices++; return { id: { _serialized: "notice" } }; },
+  });
+  await f.bridge.accept(f.message());
+  await f.bridge.tick();
+  f.advance(90000);
+  await f.bridge.tick();
+  assert.equal((await f.stored())[0].status, "unconfirmed");
+  const restarted = new WhatsAppYouTubeBridge(f.options);
+  await restarted.observe(chatId);
+  await restarted.notifyPending();
+  assert.equal((await f.stored())[0].status, "observed");
+  assert.equal(notices, 0);
+});
+
+test("observing another comment still warns for the genuinely unobserved LCC ID", async (t) => {
+  const notices = [];
+  const f = await fixture(t, {
+    send: async () => ({ id: capturedMessageIds[0][0] }),
+    notify: async (...args) => { notices.push(args); return { id: { _serialized: "notice" } }; },
+  });
+  await f.bridge.accept(f.message());
+  await f.bridge.tick();
+  await f.bridge.observe(capturedMessageIds[1][1]);
+  f.advance(90000);
+  await f.bridge.tick();
+  await f.bridge.notifyPending();
+  assert.equal((await f.stored())[0].status, "unconfirmed");
+  assert.equal(notices.length, 1);
+});
+
+test("unknown or malformed LCC wrappers stay opaque instead of falsely confirming another ID", async (t) => {
+  const [apiId, chatId] = capturedMessageIds[0];
+  const valid = Buffer.from(apiId.slice(4), "base64url");
+  const changedByte = (offset, value) => {
+    const bytes = Buffer.from(valid);
+    bytes[offset] = value;
+    return `LCC.${bytes.toString("base64url")}`;
+  };
+  for (const unknownId of [
+    `${apiId}!`, "LCC.not-valid-base64", `LCC.${Buffer.from(chatId).toString("base64url")}`,
+    changedByte(0, 0x0a), changedByte(2, 0x12),
+    changedByte(1, valid[1] - 1), changedByte(3, valid[3] - 1),
+    `LCC.${valid.subarray(0, -1).toString("base64url")}`,
+    `LCC.${Buffer.concat([valid, Buffer.from([0])]).toString("base64url")}`,
+  ]) {
+    const f = await fixture(t, { send: async () => ({ id: unknownId }) });
+    await f.bridge.accept(f.message());
+    await f.bridge.tick();
+    await f.bridge.observe(chatId);
+    assert.equal((await f.stored())[0].status, "submitted", unknownId);
+    await f.bridge.observe(unknownId);
+    assert.equal((await f.stored())[0].status, "observed", "opaque IDs still support exact matching");
+  }
+});
+
+test("malformed reader envelopes do not confirm the captured API comment", async (t) => {
+  const [apiId, readerId] = capturedMessageIds[0];
+  const valid = Buffer.from(readerId, "base64url");
+  const changedByte = (offset, value) => {
+    const bytes = Buffer.from(valid);
+    bytes[offset] = value;
+    return bytes.toString("base64url");
+  };
+  const f = await fixture(t, { send: async () => ({ id: apiId }) });
+  await f.bridge.accept(f.message());
+  await f.bridge.tick();
+  for (const invalidId of [
+    `${readerId}!`, changedByte(0, 0x12), changedByte(2, 0x12),
+    changedByte(1, valid[1] - 1), changedByte(3, valid[3] - 1),
+    valid.subarray(0, -1).toString("base64url"),
+    Buffer.concat([valid, Buffer.from([0])]).toString("base64url"),
+  ]) {
+    await f.bridge.observe(invalidId);
+    assert.equal((await f.stored())[0].status, "submitted", invalidId);
+  }
+  await f.bridge.observe(readerId);
+  assert.equal((await f.stored())[0].status, "observed");
+});
+
+test("API and reader IDs also match when received in reverse order", async (t) => {
+  const [apiId, chatId] = capturedMessageIds[0];
+  const f = await fixture(t, { send: async () => ({ id: chatId }) });
+  await f.bridge.accept(f.message());
+  await f.bridge.tick();
+  await f.bridge.observe(apiId);
+  assert.equal((await f.stored())[0].status, "observed");
+});
+
 test("timeouts and interrupted submissions are uncertain across restarts", async (t) => {
   const f = await fixture(t, { send: async () => { throw new Error("connection lost"); } });
   await f.bridge.accept(f.message());
