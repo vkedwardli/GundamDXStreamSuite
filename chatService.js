@@ -221,6 +221,7 @@ function processChatMessage(chatItem, faction, io) {
   }
 
   // NOW we emit the final version with the icon to the chat box
+  msg.tts = Boolean(ttsText && currentMegaphoneState.enabled);
   io.emit("message", msg);
 
   if (ttsText && currentMegaphoneState.enabled) {
@@ -228,6 +229,7 @@ function processChatMessage(chatItem, faction, io) {
       text: ttsText,
       model: ttsModel,
       voiceID: ttsVoiceID,
+      messageId: msg.id,
     });
   }
 

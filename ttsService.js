@@ -1,16 +1,17 @@
 import { promisify } from "util";
-import { exec } from "child_process";
-import fs, { writeFile, unlink } from "fs/promises";
-import path, { join } from "path";
-import os, { tmpdir } from "os";
+import { execFile } from "child_process";
+import fs from "fs/promises";
+import { join } from "path";
+import { tmpdir } from "os";
 import axios from "axios";
-import sound from "sound-play";
 import Bottleneck from "bottleneck";
-import { randomUUID } from "crypto";
 import { io } from "./serverSetup.js";
 import { TTSModel, MINIMAX_GROUP_ID, MINIMAX_API_KEY } from "./config.js";
 
-const execPromise = promisify(exec);
+import { playCaptionAudio } from "./ttsPlayback.js";
+import { parseSrt, CAPTION_HOLD_MS, CAPTION_GAP_MS } from "./ttsTiming.js";
+
+const execFilePromise = promisify(execFile);
 
 // Create rate limiter: 20 requests per minute (60,000ms / 20 = 3,000ms between requests)
 const limiter = new Bottleneck({
@@ -57,9 +58,17 @@ async function processTTSQueue() {
   }
 
   isPlaying = true;
-  let { text, model, voiceID } = audioQueue.shift(); // Make text mutable
+  let { text, model, voiceID, messageId } = audioQueue.shift();
+  let tempDirectory;
+  let status = "failed";
 
   try {
+    if (io) io.emit("tts_preparing", { messageId });
+    // os.tmpdir() uses Windows' temp directory. Remove the entire job directory
+    // ourselves after playback/failure; an interrupted process leaves only temp files.
+    tempDirectory = await fs.mkdtemp(join(tmpdir(), "gdx-tts-"));
+    const audioPath = join(tempDirectory, "speech.mp3");
+    let cues = [];
     if (model === TTSModel.AZURE_AI) {
       const originalText = text;
       text = preprocessAzureText(text, voiceID);
@@ -68,11 +77,22 @@ async function processTTSQueue() {
           `Azure TTS (${voiceID}): Original text: "${originalText}" | Preprocessed: "${text}"`,
         );
       }
-      await execPromise(
-        `edge-playback --rate=-30% --volume=+100% --voice "${voiceID}" --text "${text}"`,
-      );
-      console.log("Azure AI Speech playback completed");
-      if (io) io.emit("tts_finished");
+      const textPath = join(tempDirectory, "speech.txt");
+      const subtitlePath = join(tempDirectory, "speech.srt");
+      await fs.writeFile(textPath, text, "utf8");
+      // One synthesis request writes both audio and sentence timing. A text file
+      // avoids shell quoting and Windows command-line length limits.
+      await execFilePromise("edge-tts", [
+        "--rate=-30%", "--volume=+100%", "--voice", voiceID,
+        "--file", textPath, "--write-media", audioPath,
+        "--write-subtitles", subtitlePath,
+      ], { windowsHide: true, timeout: 120000 });
+      try {
+        cues = parseSrt(await fs.readFile(subtitlePath, "utf8"));
+      } catch (error) {
+        // Missing subtitles should not discard successfully downloaded speech.
+        console.warn("TTS subtitles unavailable; using estimated caption timing:", error.message);
+      }
     } else {
       // MiniMaxAI TTS
       const response = await rateLimitedPost(
@@ -104,60 +124,38 @@ async function processTTSQueue() {
         },
       );
 
-      // console.log(response.data.base_resp); // Keep this commented unless debugging
-      if (
-        response.status === 200 &&
-        response.data.base_resp?.status_code === 0
-      ) {
-        const tempFilePath = join(tmpdir(), `${randomUUID()}.mp3`);
-        // console.log(tempFilePath); // Keep this commented unless debugging
-
-        try {
-          // Convert hex to binary (Buffer)
-          const mp3Buffer = Buffer.from(response.data.data?.audio, "hex");
-
-          // Write the buffer to a temporary MP3 file
-          await writeFile(tempFilePath, mp3Buffer);
-
-          // Play the MP3 file
-          await sound.play(tempFilePath, 1.0);
-          console.log("MiniMax AI Speech playback completed");
-          if (io) io.emit("tts_finished");
-
-          // Clean up the temporary file
-          setTimeout(() => {
-            unlink(tempFilePath).catch((err) =>
-              console.error("Error unlinking temp TTS file:", err),
-            );
-          }, 1000);
-        } catch (error) {
-          console.error("Error processing audio:", error.message);
-        }
-      } else {
-        console.error(
-          "API response error:",
-          response.data?.base_resp || "Unknown API error",
-        );
+      if (response.status !== 200 || response.data.base_resp?.status_code !== 0) {
+        throw new Error(`MiniMax API response error: ${JSON.stringify(response.data?.base_resp)}`);
       }
+      await fs.writeFile(audioPath, Buffer.from(response.data.data?.audio, "hex"));
     }
 
-    // Wait for 1.5 seconds before processing the next item
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await playCaptionAudio(audioPath, (durationMs) => {
+      if (io) io.emit("tts_started", { messageId, startedAt: Date.now(), durationMs, cues });
+    });
+    status = "finished";
+    console.log(`${model === TTSModel.AZURE_AI ? "Azure AI" : "MiniMax AI"} Speech playback completed`);
   } catch (error) {
     const errorMessage = error.response ? error.response.data : error.message;
     console.error("Error in audio playback:", errorMessage);
   } finally {
-    isPlaying = false;
-    // Process the next item in the queue
-    if (audioQueue.length > 0) {
-      await processTTSQueue();
+    if (io) io.emit("tts_finished", { messageId, status, finishedAt: Date.now() });
+    if (tempDirectory) {
+      await fs.rm(tempDirectory, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })
+        .catch((error) => console.error("Error removing temp TTS files:", error.message));
     }
+    // Give viewers time to look up, then leave the reviewed idle gap before
+    // another spoken caption. Audio without an overlay keeps its original gap.
+    await new Promise((resolve) => setTimeout(resolve,
+      messageId ? CAPTION_HOLD_MS + CAPTION_GAP_MS : 1500));
+    isPlaying = false;
+    if (audioQueue.length > 0) await processTTSQueue();
   }
 }
 
-export async function textToSpeech({ text, model, voiceID }) {
+export async function textToSpeech({ text, model, voiceID, messageId }) {
   // Add message to queue
-  audioQueue.push({ text, model, voiceID });
+  audioQueue.push({ text, model, voiceID, messageId });
 
   // If already playing, return and let the queue handle it
   if (isPlaying) {

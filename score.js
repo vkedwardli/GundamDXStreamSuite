@@ -296,18 +296,19 @@ const announceTuesdaySpecial = () => {
     gameState.lastBattleAnnouncement = gameState.totalBattles;
     const text = `荔枝角超級星期二提提你：今晚無限制，推槍笠頭鳩搲乜都得！`;
 
-    textToSpeech({
-      text,
-      model: TTSModel.AZURE_AI,
-      voiceID: "zh-HK-HiuMaanNeural",
-    });
-
     const msg = createMessage({
       authorName: "規矩L",
       profilePic: "images/star.png",
       message: text,
+      tts: true,
     });
     io.emit("message", msg);
+    textToSpeech({
+      text,
+      model: TTSModel.AZURE_AI,
+      voiceID: "zh-HK-HiuMaanNeural",
+      messageId: msg.id,
+    });
   }
 };
 
@@ -513,21 +514,21 @@ const processBattleOutcome = () => {
   const streakMessage =
     newStreak > 10 ? superStreakMessage : streakMessages[newStreak];
   if (streakMessage) {
-    // Play TTS
-    textToSpeech({
-      text: streakMessage,
-      model: TTSModel.AZURE_AI,
-      voiceID: "zh-HK-HiuMaanNeural", // Gossip voice
-    });
-
-    // Emit chat message
+    // Emit the caption before starting its associated speech.
     const msg = createMessage({
       isFederation: winner === Faction.FEDERATION,
       authorName: `${winner.displayName}連勝！`,
       profilePic: "images/star.png",
       message: streakMessage,
+      tts: true,
     });
     io.emit("message", msg);
+    textToSpeech({
+      text: streakMessage,
+      model: TTSModel.AZURE_AI,
+      voiceID: "zh-HK-HiuMaanNeural", // Gossip voice
+      messageId: msg.id,
+    });
   }
 
   // --- 4. Log the overall summary ---

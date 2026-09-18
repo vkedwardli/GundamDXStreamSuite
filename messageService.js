@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 export function getFormattedTime(date = new Date()) {
   const options = {
     hour: "numeric",
@@ -16,8 +18,11 @@ export function createMessage({
   message,
   plainMessage,
   timestamp,
+  tts = false,
 } = {}) {
   return {
+    id: randomUUID(),
+    tts,
     isFederation,
     time: getFormattedTime(timestamp),
     timestamp, // Store the original Date object (can be undefined for system msgs)

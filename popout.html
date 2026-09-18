@@ -1,10 +1,11 @@
 <!doctype html>
-<html>
+<html lang="zh-Hant">
   <head>
     <title>Scoreboard Overlay</title>
     <meta charset="UTF-8" />
     <style>
       body {
+        position: relative;
         margin: 0;
         padding: 0;
         background-color: transparent; /* Keep body fully transparent */
@@ -75,94 +76,87 @@
         color: #ff9999;
       }
 
-      /* Comment Overlay Styles */
+      /* Caption background covers the scoreboard too; only opacity animates. */
       #comment-overlay {
         position: absolute;
-        top: 0;
-        left: 0;
-        width: 1920px;
-        height: 640px; /* Leave space for the scoreboard bar */
-        background: transparent;
-        overflow: hidden;
+        inset: 0;
+        height: 760px;
+        background: #080d13 url("./images/overlaybackground-static.png") center / 100% 100% no-repeat;
+        opacity: 0;
+        transition: opacity 0.7s ease;
+        pointer-events: none;
+        font-family: "Microsoft JhengHei UI", "Microsoft JhengHei", "PingFang TC", "Heiti TC", sans-serif;
+        --accent: #8fc8ff;
+      }
+      #comment-overlay.visible { opacity: 1; }
+      #comment-overlay::after {
+        content: "";
+        position: absolute;
+        top: 640px;
+        left: 16px;
+        right: 16px;
+        height: 1px;
+        background: rgba(115, 194, 225, 0.35);
+      }
+      .scoreboard-container { z-index: 1; }
+      .caption {
+        box-sizing: border-box;
+        height: 640px;
+        border-top: 10px solid transparent;
+        padding: 28px 80px 20px;
+        display: flex;
+        flex-direction: column;
+      }
+      .caption-header {
+        height: 82px;
+        flex-shrink: 0;
         display: flex;
         align-items: center;
-        transition: opacity 1s ease;
-        opacity: 0;
-        pointer-events: none;
-        z-index: -1; /* Behind scoreboard if they overlap */
+        justify-content: space-between;
+        gap: 36px;
       }
-
-      #comment-bg-image {
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: url("./images/overlaybackground.jpg") no-repeat center;
-        background-size: cover;
-        opacity: 0;
-        transition: opacity 1s ease;
-        z-index: 1;
-      }
-
-      #comment-flash-layer {
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: transparent;
-        z-index: 2;
-      }
-
-      #comment-text {
-        position: relative;
+      #comment-author {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
         white-space: nowrap;
-        font-family:
-          "Microsoft JhengHei UI", "Microsoft JhengHei", "Heiti TC", sans-serif; /* Clean bold Chinese-ready font */
-        font-size: 320px; /* Reduced to 50% of 640px height */
-        font-weight: 900;
-        color: white;
-        padding-left: 0;
-        display: inline-block;
-        z-index: 3;
-        margin-top: -40px;
+        font-size: 58px;
+        font-weight: 700;
+        color: var(--accent);
       }
-
-      /* TTS "Attention" state: flashing background */
-      .flash-active #comment-flash-layer {
-        animation: flash-bg 0.4s infinite;
+      #comment-state {
+        flex-shrink: 0;
+        font-size: 36px;
+        border: 2px solid #455263;
+        border-radius: 12px;
+        padding: 10px 24px;
+        color: #c8d1dc;
       }
-      .flash-active #comment-text {
-        color: black !important;
+      #comment-state[data-phase="preparing"] { color: #f8d48d; border-color: #8f713e; }
+      #comment-state[data-phase="speaking"] { color: #bcf5d5; border-color: #50765f; }
+      #comment-text {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding-bottom: 16px;
+        font-size: 176px;
+        font-weight: 800;
+        line-height: 1.23;
+        color: #fff;
       }
-
-      @keyframes flash-bg {
-        0%,
-        100% {
-          background-color: white;
-        }
-        50% {
-          background-color: #666;
-        }
+      .caption-line { white-space: pre; }
+      .caption-footer {
+        height: 46px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 30px;
+        color: #91a2b4;
       }
-
-      /* Normal Comment state: visible image background */
-      .comment-active #comment-bg-image {
-        opacity: 1;
-      }
-      .comment-active #comment-text {
-        color: white !important;
-      }
-
-      @keyframes marquee {
-        0% {
-          transform: translateX(1920px);
-        }
-        100% {
-          transform: translateX(-100%);
-        }
-      }
+      #page-dots { display: flex; gap: 14px; }
+      .page-dot { width: 42px; height: 8px; background: #374351; }
+      .page-dot.current { background: var(--accent); }
 
       @keyframes new-star-animation {
         0% {
@@ -183,10 +177,18 @@
     </style>
   </head>
   <body>
-    <div id="comment-overlay">
-      <div id="comment-bg-image"></div>
-      <div id="comment-flash-layer"></div>
-      <div id="comment-text"></div>
+    <div id="comment-overlay" aria-hidden="true">
+      <section class="caption">
+        <div class="caption-header">
+          <div id="comment-author"></div>
+          <div id="comment-state"></div>
+        </div>
+        <div id="comment-text" aria-live="polite" aria-atomic="true"></div>
+        <div class="caption-footer">
+          <span id="page-label"></span>
+          <span id="page-dots" aria-hidden="true"></span>
+        </div>
+      </section>
     </div>
     <div class="scoreboard-container">
       <div class="faction-box">
@@ -208,7 +210,10 @@
     </div>
 
     <script src="./socket.io.min.js"></script>
-    <script>
+    <script type="module">
+      import { paginateCaption } from "./captionLayout.js";
+      import { captionPageTimes, CAPTION_HOLD_MS, CAPTION_GAP_MS } from "./ttsTiming.js";
+
       const socket = io();
 
       const fedWinsEl = document.getElementById("fed-wins");
@@ -234,108 +239,168 @@
         }
       });
 
-      let commentQueue = [];
-      let isDisplayingComment = false;
-      let currentTTSResolver = null;
+      const commentQueue = [];
+      const authorEl = document.getElementById("comment-author");
+      const stateEl = document.getElementById("comment-state");
+      const pageLabel = document.getElementById("page-label");
+      const pageDots = document.getElementById("page-dots");
+      const measureContext = document.createElement("canvas").getContext("2d");
+      let currentComment = null;
+      let displayTimer;
+      let watchdog;
 
       socket.on("message", (msg) => {
-        console.log("New message for overlay:", msg);
-        if (msg && msg.plainMessage) {
-          // Extra guard: Ignore messages that are older than 30 seconds (lag or backlog)
-          if (msg.timestamp) {
-            const msgTime = new Date(msg.timestamp).getTime();
-            if (Date.now() - msgTime > 30000) {
-              console.log("Ignoring old message:", msg.plainMessage);
-              return;
-            }
+        if (!msg || typeof msg.plainMessage !== "string" || !msg.plainMessage.trim()) return;
+        // Extra guard: Ignore messages that are older than 30 seconds (lag or backlog).
+        if (msg.timestamp && Date.now() - new Date(msg.timestamp).getTime() > 30000) return;
+
+        // Users can send a single line. Fit it to this screen, without requiring
+        // newlines in YouTube/WhatsApp or breaking a Unicode emoji in half.
+        const prefix = msg.plainMessage.match(/^(?:(?:🇨🇳|🌐))?[🔊🔇💁🎤]\s*/u)?.[0] || "";
+        const style = getComputedStyle(commentText);
+        measureContext.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+        const pages = paginateCaption(msg.plainMessage.slice(prefix.length),
+          (text) => measureContext.measureText(text).width, 1760);
+        commentQueue.push({ msg, prefix, pages });
+        processCommentQueue();
+      });
+
+      function findComment(messageId) {
+        if (!messageId) return null;
+        const entry = currentComment?.msg.id === messageId ? currentComment
+          : commentQueue.find((item) => item.msg.id === messageId);
+        return entry?.msg.tts ? entry : null;
+      }
+
+      socket.on("tts_preparing", (event) => {
+        const entry = findComment(event?.messageId);
+        if (entry === currentComment && entry) waitForSpeech();
+      });
+
+      socket.on("tts_started", (event) => {
+        const entry = findComment(event?.messageId);
+        if (!entry || entry.end || entry.start) return;
+        entry.start = event;
+        // Speech has priority over an ordinary comment; keep that comment queued.
+        if (currentComment !== entry) {
+          const index = commentQueue.indexOf(entry);
+          commentQueue.splice(index, 1);
+          if (currentComment && !currentComment.readComplete && currentComment.end?.status !== "finished") {
+            commentQueue.unshift(currentComment);
           }
-          commentQueue.push(msg);
+        }
+        showComment(entry);
+      });
+
+      socket.on("tts_finished", (event) => {
+        const entry = findComment(event?.messageId);
+        if (!entry || entry.end) return; // Ignore anonymous/unrelated completion events.
+        entry.end = event;
+        if (entry === currentComment) finishSpeech();
+      });
+
+      function clearDisplayTimers() {
+        clearTimeout(displayTimer);
+        clearTimeout(watchdog);
+      }
+
+      function setPhase(phase, label) {
+        stateEl.dataset.phase = phase;
+        stateEl.textContent = label;
+      }
+
+      function renderPage(index) {
+        const entry = currentComment;
+        commentText.replaceChildren(...entry.pages[index].map((line) => {
+          const element = document.createElement("div");
+          element.className = "caption-line";
+          element.textContent = line;
+          return element;
+        }));
+        pageLabel.textContent = `${index + 1} / ${entry.pages.length}`;
+        // Keep the footer bounded even for unusually long system messages.
+        pageDots.replaceChildren(...(entry.pages.length <= 12 ? entry.pages : []).map((_, page) => {
+          const dot = document.createElement("span");
+          dot.className = `page-dot${page === index ? " current" : ""}`;
+          return dot;
+        }));
+      }
+
+      function processCommentQueue() {
+        if (!currentComment && commentQueue.length) showComment(commentQueue.shift());
+      }
+
+      function showComment(entry) {
+        clearDisplayTimers();
+        currentComment = entry;
+        commentOverlay.style.setProperty("--accent", entry.msg.isFederation === false ? "#ffb6b6" : "#8fc8ff");
+        authorEl.textContent = `${entry.msg.isFederation === false ? "🔴" : "🔵"} ${entry.msg.authorName || "觀眾"} ${entry.prefix}`.trim();
+        commentOverlay.classList.add("visible");
+        commentOverlay.setAttribute("aria-hidden", "false");
+        renderPage(0);
+        if (entry.end) finishSpeech();
+        else if (entry.start) followSpeech();
+        else if (entry.msg.tts) waitForSpeech();
+        else readPages();
+      }
+
+      function waitForSpeech() {
+        clearDisplayTimers();
+        setPhase("preparing", "準備語音…");
+        // Prevent a lost connection or failed child process from covering OBS forever.
+        watchdog = setTimeout(() => readPages("語音暫時未能播放"), 180000);
+      }
+
+      function followSpeech() {
+        setPhase("speaking", "播放中");
+        const { pages, start } = currentComment;
+        const times = captionPageTimes(pages, start.cues || [], start.durationMs);
+        const updatePage = () => {
+          const elapsed = Math.max(0, Date.now() - start.startedAt);
+          let page = 0;
+          while (page + 1 < times.length && times[page + 1] <= elapsed) page++;
+          renderPage(page);
+          if (page + 1 < times.length) displayTimer = setTimeout(updatePage, times[page + 1] - elapsed);
+        };
+        updatePage();
+        watchdog = setTimeout(() => readPages("語音狀態不明"),
+          Math.max(1000, start.startedAt + start.durationMs + 15000 - Date.now()));
+      }
+
+      function finishSpeech() {
+        clearDisplayTimers();
+        if (currentComment.end.status !== "finished") {
+          readPages("語音未能播放");
+          return;
+        }
+        renderPage(currentComment.pages.length - 1);
+        setPhase("hold", "播放完畢");
+        displayTimer = setTimeout(hideComment, CAPTION_HOLD_MS);
+      }
+
+      function readPages(label = "留言") {
+        clearDisplayTimers();
+        setPhase("reading", label);
+        let page = 0;
+        const advance = () => {
+          renderPage(page++);
+          displayTimer = setTimeout(page < currentComment.pages.length ? advance : hideComment, 5000);
+        };
+        advance();
+      }
+
+      function hideComment() {
+        clearDisplayTimers();
+        currentComment.readComplete = true;
+        commentOverlay.classList.remove("visible");
+        commentOverlay.setAttribute("aria-hidden", "true");
+        // Keep content in place during the fade; the scoreboard stays visible.
+        displayTimer = setTimeout(() => {
+          currentComment = null;
           processCommentQueue();
-        }
-      });
-
-      socket.on("tts_finished", () => {
-        console.log("TTS Finished event received");
-        if (currentTTSResolver) {
-          currentTTSResolver();
-          currentTTSResolver = null;
-        }
-      });
-
-      async function processCommentQueue() {
-        if (isDisplayingComment || commentQueue.length === 0) return;
-
-        isDisplayingComment = true;
-        const msg = commentQueue.shift();
-
-        // Include author name
-        const text = `${msg.authorName}: ${msg.plainMessage}`;
-
-        // Check for TTS icons in plainMessage: 🔊 (Say), 💁 (Gossip), 🎤 (Anchor)
-        const isTTS = /[🔊💁🎤]/.test(msg.plainMessage);
-
-        await displayComment(text, isTTS);
+        }, CAPTION_GAP_MS);
       }
 
-      async function displayComment(text, isTTS) {
-        commentText.style.animation = "none";
-        commentOverlay.style.opacity = "0";
-        commentText.textContent = ""; // Clear text initially
-        commentText.offsetHeight; // trigger reflow
-
-        if (isTTS) {
-          // 1. Start Flashing (Attention)
-          commentOverlay.className = "flash-active";
-          commentOverlay.style.opacity = "1";
-
-          // 2. Wait for TTS to finish (via socket event)
-          await Promise.race([
-            new Promise((resolve) => {
-              currentTTSResolver = resolve;
-            }),
-            new Promise((resolve) => setTimeout(resolve, 10000)), // Safety timeout
-          ]);
-
-          // 3. Populate text and start marquee
-          const gap = "\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0";
-          commentText.textContent = (text + gap).repeat(4).trimEnd();
-          commentOverlay.className = "comment-active";
-          startMarquee();
-        } else {
-          // Normal comment
-          const gap = "\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0";
-          commentText.textContent = (text + gap).repeat(4).trimEnd();
-          commentOverlay.className = "comment-active";
-          commentOverlay.style.opacity = "1";
-          startMarquee();
-        }
-      }
-      function startMarquee() {
-        // Calculate dynamic duration based on text length to keep speed constant
-        const containerWidth = 1920;
-        const textWidth = commentText.offsetWidth;
-        const scrollDistance = containerWidth + textWidth;
-        const pixelsPerSecond = 1200; // Adjust this value to change the constant speed
-        const duration = scrollDistance / pixelsPerSecond;
-
-        // Run exactly 1 time (since the content is already repeated 4 times)
-        // Use forwards to keep it off-screen during the fade out
-        commentText.style.animation = `marquee ${duration}s linear 1 forwards`;
-
-        // Total time for the full scroll + small buffer to ensure fade-out starts
-        const totalTime = duration * 1000;
-
-        setTimeout(() => {
-          commentOverlay.style.opacity = "0";
-          setTimeout(() => {
-            commentOverlay.className = "";
-            commentText.style.animation = "none";
-            commentText.textContent = "";
-            isDisplayingComment = false;
-            processCommentQueue(); // Immediately check for next
-          }, 1100); // Buffer slightly longer than CSS transition (1s)
-        }, totalTime + 200);
-      }
       function updateScoreboard(state) {
         fedWinsEl.textContent = state.totalWins.federation || 0;
         zeonWinsEl.textContent = state.totalWins.zeon || 0;
@@ -374,17 +439,6 @@
         }
       }
 
-      /* Test trigger: verifies the design 1s after load
-      setTimeout(() => {
-        console.log("Triggering test comment for design verification...");
-        const testMsg = {
-          authorName: "Edward Li",
-          plainMessage: "側経意責家方家閉討店暖育田庁載",
-          timestamp: new Date().toISOString(),
-        };
-        commentQueue.push(testMsg);
-        processCommentQueue();
-      }, 1000); */
     </script>
   </body>
 </html>

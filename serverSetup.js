@@ -107,6 +107,7 @@ export function setupServer(onClientConnected) {
         ".jpg": "image/jpeg",
         ".gif": "image/gif",
         ".svg": "image/svg+xml",
+        ".mp3": "audio/mpeg", // Local audio for the caption preview
         ".ico": "image/x-icon", // Added ICO for favicon
       };
 

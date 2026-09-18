@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>靜態字幕預覽 · Gundam DX</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root { color-scheme: dark; font-family: "Microsoft JhengHei UI", "Microsoft JhengHei", "PingFang TC", sans-serif; }
+    body { margin: 0; background: #101419; color: #eff3f7; }
+    main { max-width: 1440px; margin: auto; padding: 32px 28px; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-bottom: 22px; }
+    .eyebrow { color: #8ca4b8; font-size: 12px; letter-spacing: .16em; margin: 0 0 8px; }
+    h1 { margin: 0; font-size: 26px; font-weight: 650; }
+    .intro { color: #aab5c1; font-size: 14px; line-height: 1.7; margin: 8px 0 0; }
+    button, select { font: inherit; color: inherit; background: #202832; border: 1px solid #3b4958; border-radius: 8px; padding: 10px 14px; }
+    button { cursor: pointer; }
+    button:hover { background: #2c3947; }
+    button:focus-visible, select:focus-visible { outline: 3px solid #90caff; outline-offset: 3px; }
+    button:disabled { opacity: .4; cursor: default; }
+    .primary { background: #c5e3fc; border-color: #c5e3fc; color: #101b25; font-weight: 650; }
+    .primary:hover { background: #e2f1ff; }
+    #viewport { width: 100%; aspect-ratio: 1920 / 1080; position: relative; overflow: hidden; background: #000; border-radius: 10px; outline: 1px solid #34404c; }
+    #viewport:fullscreen { width: 100vw; height: 100vh; border-radius: 0; outline: 0; }
+    #stage { position: absolute; width: 1920px; height: 1080px; background: url('./images/test-obs-background.jpg') center / 1920px 1080px no-repeat; transform-origin: top left; --accent: #8fc8ff; }
+    #overlay { position: absolute; top: 0; left: 0; width: 1920px; height: 760px; }
+    #message-layer { position: absolute; inset: 0; background: #080d13 url('./images/overlaybackground-static.png') center / 100% 100% no-repeat; opacity: 0; transition: opacity var(--fade-duration, 700ms) ease; }
+    /* Keep the divider aligned with the real 640px caption area, independently of the artwork. */
+    #message-layer::after { content: ''; position: absolute; top: 640px; left: 16px; right: 16px; height: 1px; background: rgba(115, 194, 225, .35); pointer-events: none; }
+    #overlay.message-visible #message-layer { opacity: 1; }
+    .caption { height: 640px; border-top: 10px solid transparent; padding: 28px 80px 20px; display: flex; flex-direction: column; }
+    .caption-header { display: flex; align-items: center; justify-content: space-between; gap: 36px; height: 82px; flex-shrink: 0; }
+    #author { font-size: 58px; color: var(--accent); font-weight: 700; white-space: nowrap; }
+    #state { font-size: 36px; border: 2px solid #455263; color: #c8d1dc; border-radius: 12px; padding: 10px 24px; white-space: nowrap; }
+    #state[data-phase="preparing"] { color: #f8d48d; border-color: #8f713e; }
+    #state[data-phase="speaking"] { color: #bcf5d5; border-color: #50765f; }
+    #caption-text { flex: 1; display: flex; flex-direction: column; justify-content: center; padding-bottom: 16px; font-size: 176px; font-weight: 800; line-height: 1.23; letter-spacing: 0; color: #fff; }
+    .caption-line { white-space: pre; }
+    .caption-footer { height: 46px; display: flex; justify-content: space-between; align-items: center; font-size: 30px; color: #91a2b4; }
+    #page-dots { display: flex; gap: 14px; }
+    .dot { width: 42px; height: 8px; background: #374351; }
+    .dot.current { background: var(--accent); }
+    /* Original popout.html scoreboard geometry, colours, font, and star asset. */
+    .scoreboard-container { position: absolute; bottom: 0; width: 100%; height: 120px; display: flex; align-items: baseline; justify-content: center; gap: 60px; background: rgba(0, 0, 0, .5); padding: 18px 0; font-family: "a Atmospheric", sans-serif; color: white; }
+    .faction-box { display: flex; align-items: baseline; position: relative; }
+    .wins { font-size: 84px; font-weight: bold; text-shadow: 4px 4px 8px rgba(0, 0, 0, .8); line-height: 1; min-width: 120px; text-align: center; }
+    .streak { position: absolute; display: flex; gap: 4px; align-items: baseline; top: 50%; transform: translateY(-50%); white-space: nowrap; }
+    #fed-streak { right: 100%; margin-right: 40px; flex-direction: row-reverse; }
+    #zeon-streak { left: 100%; margin-left: 40px; }
+    .streak img { height: 108px; width: auto; margin: 0 -25px; }
+    .divider { font-size: 48px; font-weight: bold; opacity: .8; line-height: 1; }
+    #zeon-wins { color: #ff9999; }
+    .preview-note { color: #8f9dad; font-size: 12px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin: 12px 0 22px; }
+    .samples { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+    .sample { text-align: left; min-height: 80px; background: #161e27; }
+    .sample small { display: block; margin-bottom: 7px; color: #9babbb; font-size: 12px; }
+    .sample[aria-pressed="true"] { border-color: #9bcefa; background: #243548; }
+    .controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+    .settings { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; margin-top: 20px; padding-top: 20px; border-top: 1px solid #303a45; font-size: 14px; color: #b7c3cf; }
+    label { display: flex; align-items: center; gap: 10px; }
+    #description { font-size: 14px; color: #c0ccd8; line-height: 1.7; min-height: 24px; margin: 18px 0 0; }
+    .footnote { font-size: 12px; line-height: 1.8; color: #8f9dad; margin: 12px 0 0; }
+    #audio-player { margin-top: 18px; }
+    #audio-player audio { width: min(100%, 620px); height: 40px; }
+    @media (max-width: 800px) { main { padding: 20px 14px; } .samples { grid-template-columns: repeat(2, 1fr); } header { align-items: flex-start; } h1 { font-size: 22px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">GUNDAM DX / CAPTION STUDY</p>
+        <h1>靜態字幕 · 大字分頁</h1>
+        <p class="intro">無留言時顯示 OBS。留言連同背景淡入，覆蓋頂部 760 px；播報完畢後淡出。</p>
+      </div>
+      <button id="fullscreen" type="button">全螢幕預覽</button>
+    </header>
+
+    <div id="viewport">
+      <div id="stage">
+        <div id="overlay">
+        <div id="message-layer" aria-hidden="true">
+        <section class="caption" aria-label="字幕預覽">
+          <div class="caption-header">
+            <div id="author"></div>
+            <div id="state"></div>
+          </div>
+          <div id="caption-text" aria-live="polite" aria-atomic="true"></div>
+          <div class="caption-footer">
+            <span id="page-label"></span>
+            <span id="page-dots" aria-hidden="true"></span>
+          </div>
+        </section>
+        </div>
+        <div class="scoreboard-container" aria-label="連邦 25 勝，自護 77 勝，自護六連勝">
+          <div class="faction-box">
+            <div id="fed-streak" class="streak"></div>
+            <div id="fed-wins" class="wins">25</div>
+          </div>
+          <div class="divider">VS</div>
+          <div class="faction-box">
+            <div id="zeon-wins" class="wins">77</div>
+            <div id="zeon-streak" class="streak" aria-label="六連勝">
+              <img src="./images/star.png" alt="" />
+              <img src="./images/star.png" alt="" />
+              <img src="./images/star.png" alt="" />
+              <img src="./images/star.png" alt="" />
+              <img src="./images/star.png" alt="" />
+              <img src="./images/star.png" alt="" />
+            </div>
+          </div>
+        </div>
+        </div>
+      </div>
+    </div>
+    <div class="preview-note">
+      <span>模擬螢幕 1920 × 1080 · Overlay 1920 × 760 · 字幕區 1920 × 640 · 字體 176 px</span>
+      <span>原版計分板 · 連邦 25 : 77 自護 · 自護六連勝</span>
+    </div>
+
+    <nav class="samples" aria-label="選擇示範訊息">
+      <button class="sample" data-sample="0" type="button"><small>01 / !gossip 女聲</small>💁 唔響應夜賓分…</button>
+      <button class="sample" data-sample="1" type="button"><small>02 / TTS 短句</small>🔊 西尻利</button>
+      <button class="sample" data-sample="2" type="button"><small>03 / TTS 兩行</small>🔊 一比一和波，唔洗救</button>
+      <button class="sample" data-sample="3" type="button"><small>04 / TTS 報時</small>報時 + 贊助商</button>
+      <button class="sample" data-sample="4" type="button"><small>05 / TTS 連勝</small>自護六連勝 · 六六無窮</button>
+    </nav>
+    <div class="controls">
+      <button id="play-all" class="primary" type="button">▶ 播放全部示範</button>
+      <button id="idle" type="button" aria-pressed="true">無留言 / 淡出</button>
+      <button id="replay" type="button">重播本則</button>
+      <button id="pause" type="button">播放</button>
+      <button id="previous" type="button">← 上一頁</button>
+      <button id="next" type="button">下一頁 →</button>
+    </div>
+    <div class="settings">
+      <label>淡入 / 淡出
+        <select id="fade-seconds"><option value="0.3">0.3 秒</option><option value="0.7" selected>0.7 秒</option><option value="1.2">1.2 秒</option></select>
+      </label>
+      <label>模擬 TTS 準備時間
+        <select id="prepare-seconds"><option value="0">立即播放</option><option value="1">1 秒</option><option value="3" selected>3 秒</option><option value="7">7 秒</option></select>
+      </label>
+      <span>實際 MP3 播放 · 速度 −30% · 音量 +100% · 可用下方播放器調整音量及進度。</span>
+    </div>
+    <div id="audio-player"></div>
+    <p id="description" role="status"></p>
+    <p class="footnote">音訊由系統 edge-tts 預先下載，使用現有指令的聲線及設定；開啟此頁毋須連接 TTS 服務。只有準備延遲是模擬；「播報中」及結束狀態由實際音訊事件控制。分頁參考下載的句子時間，句內換頁按字數估算，並非逐字同步。語音完結後保留三秒，再淡出；連播間隔三秒（包括淡出），計分板一直保留。</p>
+  </main>
+  <script>
+    // Standalone visual prototype. Production popout.html and TTS are unchanged.
+    // Local MP3s use the same voices, rate and volume as the production commands.
+    // Lines are authored for these five examples, not a production paginator.
+    const samples = [
+      {
+        author: '🔵 @ktyung7317 · 💁', color: '#8fc8ff',
+        pages: [['唔響應夜賓分,', '睇死中秋無人流,'], ['黨鐵陽捧陰違']],
+        audio: 'gossip.mp3', pageStarts: [0, 5.312],
+        description: '!gossip：zh-HK-HiuMaanNeural 女聲，使用實際下載音訊，長留言分兩頁。'
+      },
+      {
+        author: '🔴 @itbrucehk · 🔊', color: '#ff9aa6',
+        pages: [['西尻利']],
+        audio: 'say-short.mp3', pageStarts: [0],
+        description: '!say：zh-HK-WanLungNeural 男聲。等候期間已可閱讀，聲音開始才顯示「播報中」。'
+      },
+      {
+        author: '🔴 @itbrucehk · 🔊', color: '#ff9aa6',
+        pages: [['一比一和波，', '唔洗救']],
+        audio: 'say-draw.mp3', pageStarts: [0],
+        description: '!say：zh-HK-WanLungNeural 男聲，兩行完整顯示，待音訊播完後才淡出。'
+      },
+      {
+        author: '◷ 報時系統', color: '#f4d28a',
+        // Same wording as timeAnnouncer.js, with fixed example time and scores.
+        pages: [
+          ['宇宙世紀標準時間，', '而家係 凌晨一點正，'],
+          ['聯邦 25勝，', '自護 77勝。'],
+          ['報時訊號由', '飛藝洋服 贊助播出']
+        ],
+        audio: 'time-sponsor.mp3', pageStarts: [0, 6.486, 10.428],
+        description: '報時 TTS：依次展示時間、戰績、贊助商。範例採用現有報時文案及贊助商「飛藝洋服」。'
+      },
+      {
+        author: '★ 自護連勝！', color: '#ff9aa6',
+        pages: [['六六無窮']],
+        audio: 'streak.mp3', pageStarts: [0],
+        description: '連勝 TTS：現有六連勝播報「六六無窮」，配合自護六顆連勝星。'
+      }
+    ];
+    const byId = (id) => document.getElementById(id);
+    const viewport = byId('viewport');
+    const stage = byId('stage');
+    const overlay = byId('overlay');
+    let sampleIndex = 0;
+    let pageIndex = 0;
+    let phase = 'idle';
+    let playlist = false;
+    let paused = true;
+    let timer = null;
+    let nextStep = null;
+    let remaining = 0;
+    let deadline = 0;
+    let speechAudio = null;
+    let playbackError = '';
+    let audioVolume = 1;
+    let audioMuted = false;
+
+    function clearSchedule() {
+      clearTimeout(timer);
+      timer = null;
+      nextStep = null;
+      remaining = 0;
+    }
+
+    function stopAudio() {
+      const previous = speechAudio;
+      // Invalidate the old player before stopping it; late events must not affect a new message.
+      speechAudio = null;
+      if (previous) {
+        previous.pause();
+        previous.removeAttribute('src');
+        previous.load();
+      }
+      byId('audio-player').replaceChildren();
+    }
+
+    // One timeout per page/state. CSS opacity transitions run only on arrival/departure.
+    function schedule(callback, delay) {
+      clearTimeout(timer);
+      nextStep = callback;
+      remaining = delay;
+      if (!paused) {
+        deadline = performance.now() + remaining;
+        timer = setTimeout(() => {
+          timer = null;
+          nextStep = null;
+          callback();
+        }, remaining);
+      }
+    }
+
+    function render() {
+      const sample = samples[sampleIndex];
+      const visible = phase !== 'idle';
+      overlay.classList.toggle('message-visible', visible);
+      byId('message-layer').setAttribute('aria-hidden', String(!visible));
+      // Keep the outgoing text intact while its layer fades back to the OBS UI.
+      if (visible) {
+      stage.style.setProperty('--accent', sample.color);
+      byId('author').textContent = sample.author;
+      byId('caption-text').replaceChildren(...sample.pages[pageIndex].map((line) => {
+        const element = document.createElement('div');
+        element.className = 'caption-line';
+        element.textContent = line;
+        return element;
+      }));
+      const labels = { preparing: '準備播報', speaking: paused ? '播報暫停' : '播報中', buffering: '音訊載入中', hold: '播報完畢', error: '音訊未能播放' };
+      byId('state').textContent = labels[phase];
+      byId('state').dataset.phase = phase;
+      byId('page-label').textContent = `${pageIndex + 1} / ${sample.pages.length}`;
+      byId('page-dots').replaceChildren(...sample.pages.map((_, index) => {
+        const dot = document.createElement('span');
+        dot.className = `dot${index === pageIndex ? ' current' : ''}`;
+        return dot;
+      }));
+      }
+      byId('description').textContent = visible
+        ? `${paused ? '已暫停 · ' : ''}${playbackError || sample.description}`
+        : `無留言：背景及字幕淡出，顯示 OBS 和計分板。${playlist ? (paused ? '下一則已暫停。' : '稍後自動顯示下一則。') : '按任一範例，觀看淡入效果。'}`;
+      byId('pause').textContent = paused ? '▶ 播放' : '暫停';
+      byId('idle').setAttribute('aria-pressed', String(!visible));
+      byId('previous').disabled = !visible || pageIndex === 0;
+      byId('next').disabled = !visible || pageIndex === sample.pages.length - 1;
+      document.querySelectorAll('[data-sample]').forEach((button) => {
+        button.setAttribute('aria-pressed', String(visible && Number(button.dataset.sample) === sampleIndex));
+      });
+    }
+
+    function showIdle(continuePlaylist = false) {
+      clearSchedule();
+      stopAudio();
+      playlist = continuePlaylist && sampleIndex < samples.length - 1;
+      paused = !playlist;
+      phase = 'idle';
+      render();
+      if (playlist) schedule(() => startSample(sampleIndex + 1, true), 3000);
+    }
+
+    function syncAudioPage() {
+      if (!speechAudio) return;
+      const starts = samples[sampleIndex].pageStarts;
+      let target = 0;
+      for (let index = 1; index < starts.length; index++) {
+        if (speechAudio.currentTime >= starts[index]) target = index;
+      }
+      // timeupdate follows the media clock; repaint text only when the page changes.
+      if (target !== pageIndex) { pageIndex = target; render(); }
+    }
+
+    function playbackFailed(audio, error) {
+      if (audio !== speechAudio) return;
+      clearSchedule();
+      paused = true;
+      phase = 'error';
+      playbackError = error?.name === 'NotAllowedError'
+        ? '瀏覽器阻擋自動播放，請按「播放」或下方播放器的播放鍵。'
+        : '音訊未能播放，請確認 test-assets/captions 資料夾與此頁一同保留，再按「重播本則」。';
+      render();
+    }
+
+    function playAudio() {
+      if (!speechAudio) return;
+      const audio = speechAudio;
+      paused = false;
+      playbackError = '';
+      render();
+      audio.play().catch((error) => playbackFailed(audio, error));
+    }
+
+    function createAudio(sample) {
+      const audio = new Audio(`./test-assets/captions/${sample.audio}`);
+      speechAudio = audio;
+      audio.controls = true;
+      audio.preload = 'auto';
+      audio.volume = audioVolume;
+      audio.muted = audioMuted;
+      audio.setAttribute('aria-label', '本則留言語音');
+      byId('audio-player').replaceChildren(audio);
+      audio.addEventListener('volumechange', () => {
+        if (audio !== speechAudio) return;
+        audioVolume = audio.volume;
+        audioMuted = audio.muted;
+      });
+      audio.addEventListener('playing', () => {
+        if (audio !== speechAudio) return;
+        clearSchedule();
+        paused = false;
+        playbackError = '';
+        phase = 'speaking';
+        syncAudioPage();
+        render();
+      });
+      audio.addEventListener('timeupdate', () => {
+        if (audio === speechAudio) syncAudioPage();
+      });
+      audio.addEventListener('waiting', () => {
+        if (audio !== speechAudio || paused) return;
+        phase = 'buffering';
+        render();
+      });
+      audio.addEventListener('pause', () => {
+        if (audio !== speechAudio || audio.ended || phase === 'hold' || phase === 'error') return;
+        paused = true;
+        render();
+      });
+      audio.addEventListener('ended', () => {
+        if (audio !== speechAudio) return;
+        clearSchedule();
+        paused = false;
+        pageIndex = samples[sampleIndex].pages.length - 1;
+        phase = 'hold';
+        render();
+        schedule(() => showIdle(playlist), 3000);
+      });
+      audio.addEventListener('error', () => playbackFailed(audio, audio.error));
+    }
+
+    function startSample(index, playAll = false, startPaused = false) {
+      clearSchedule();
+      stopAudio();
+      sampleIndex = index;
+      pageIndex = 0;
+      playlist = playAll;
+      paused = startPaused;
+      playbackError = '';
+      phase = 'preparing';
+      createAudio(samples[index]);
+      render();
+      const delay = Number(byId('prepare-seconds').value) * 1000;
+      if (delay === 0 && !paused) playAudio();
+      else schedule(playAudio, delay);
+    }
+
+    function togglePause() {
+      if (phase === 'idle' && !nextStep) return startSample(sampleIndex);
+      if (paused) {
+        paused = false;
+        if (nextStep) schedule(nextStep, remaining);
+        else playAudio();
+      } else {
+        paused = true;
+        clearTimeout(timer);
+        if (nextStep) remaining = Math.max(0, deadline - performance.now());
+        speechAudio?.pause();
+      }
+      render();
+    }
+
+    function turnPage(offset) {
+      if (phase === 'idle') return;
+      const target = pageIndex + offset;
+      if (target < 0 || target >= samples[sampleIndex].pages.length) return;
+      clearSchedule();
+      speechAudio?.pause();
+      playlist = false;
+      paused = true;
+      pageIndex = target;
+      phase = 'speaking';
+      if (speechAudio) speechAudio.currentTime = samples[sampleIndex].pageStarts[target];
+      render();
+    }
+
+    function fitStage() {
+      const scale = Math.min(viewport.clientWidth / 1920, viewport.clientHeight / 1080);
+      stage.style.transform = `scale(${scale})`;
+      stage.style.left = `${(viewport.clientWidth - 1920 * scale) / 2}px`;
+      stage.style.top = `${(viewport.clientHeight - 1080 * scale) / 2}px`;
+    }
+
+    document.querySelectorAll('[data-sample]').forEach((button) => {
+      button.addEventListener('click', () => startSample(Number(button.dataset.sample)));
+    });
+    byId('play-all').addEventListener('click', () => startSample(0, true));
+    byId('idle').addEventListener('click', () => showIdle());
+    byId('replay').addEventListener('click', () => startSample(sampleIndex));
+    byId('pause').addEventListener('click', togglePause);
+    byId('previous').addEventListener('click', () => turnPage(-1));
+    byId('next').addEventListener('click', () => turnPage(1));
+    byId('fade-seconds').addEventListener('change', (event) => {
+      overlay.style.setProperty('--fade-duration', `${event.target.value}s`);
+    });
+    byId('fullscreen').addEventListener('click', async () => {
+      try { await viewport.requestFullscreen(); }
+      catch { byId('description').textContent = '瀏覽器未能開啟全螢幕，請檢查全螢幕權限，或使用瀏覽器的全螢幕選單。'; }
+    });
+    document.addEventListener('fullscreenchange', fitStage);
+    document.addEventListener('keydown', (event) => {
+      if (['BUTTON', 'SELECT', 'INPUT'].includes(event.target.tagName)) return;
+      if (event.code === 'Space') { event.preventDefault(); togglePause(); }
+      if (event.code === 'ArrowRight') { event.preventDefault(); turnPage(1); }
+      if (event.code === 'ArrowLeft') { event.preventDefault(); turnPage(-1); }
+    });
+    new ResizeObserver(fitStage).observe(viewport);
+    showIdle();
+    fitStage();
+  </script>
+</body>
+</html>

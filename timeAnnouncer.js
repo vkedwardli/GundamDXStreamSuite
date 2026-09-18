@@ -74,18 +74,19 @@ async function announceTime() {
   const text = `宇宙世紀標準時間，而家係 ${timeString}，聯邦 ${federationWins}勝，自護 ${zeonWins}勝。${closingPhrase}`;
 
   console.log(`Announcing: ${text}`);
-  textToSpeech({
-    text,
-    model: TTSModel.AZURE_AI,
-    voiceID: "zh-HK-HiuMaanNeural",
-  });
-
   const msg = createMessage({
     authorName: "報時系統",
     profilePic: "images/star.png",
     message: text,
+    tts: true,
   });
   io.emit("message", msg);
+  textToSpeech({
+    text,
+    model: TTSModel.AZURE_AI,
+    voiceID: "zh-HK-HiuMaanNeural",
+    messageId: msg.id,
+  });
 }
 
 export function startTimeAnnouncer() {
