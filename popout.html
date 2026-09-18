@@ -89,6 +89,18 @@
         --accent: #8fc8ff;
       }
       #comment-overlay.visible { opacity: 1; }
+      .caption-border-pulse {
+        position: absolute;
+        inset: 14px;
+        border-radius: 4px;
+        background:
+          linear-gradient(to right, var(--accent), transparent) left / 200px 100% no-repeat,
+          linear-gradient(to left, var(--accent), transparent) right / 200px 100% no-repeat,
+          linear-gradient(to bottom, var(--accent), transparent) top / 100% 200px no-repeat,
+          linear-gradient(to top, var(--accent), transparent) bottom / 100% 200px no-repeat;
+        opacity: 0;
+        pointer-events: none;
+      }
       #comment-overlay::after {
         content: "";
         position: absolute;
@@ -100,6 +112,8 @@
       }
       .scoreboard-container { z-index: 1; }
       .caption {
+        position: relative;
+        z-index: 1;
         box-sizing: border-box;
         height: 640px;
         border-top: 10px solid transparent;
@@ -136,6 +150,7 @@
       #comment-state[data-phase="speaking"] { color: #bcf5d5; border-color: #50765f; }
       #comment-text {
         flex: 1;
+        min-height: 0;
         display: flex;
         flex-direction: column;
         justify-content: center;
@@ -148,6 +163,7 @@
       .caption-line { white-space: pre; }
       .caption-footer {
         height: 46px;
+        flex-shrink: 0;
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -210,6 +226,7 @@
     </div>
 
     <script src="./socket.io.min.js"></script>
+    <script src="./captionEffects.js"></script>
     <script type="module">
       import { paginateCaption } from "./captionLayout.js";
       import { captionPageTimes, CAPTION_HOLD_MS, CAPTION_GAP_MS } from "./ttsTiming.js";
@@ -222,6 +239,7 @@
       const zeonStreakEl = document.getElementById("zeon-streak");
       const commentOverlay = document.getElementById("comment-overlay");
       const commentText = document.getElementById("comment-text");
+      const captionEffects = createCaptionEffects(commentText, commentOverlay);
 
       socket.on("connect", () => {
         socket.emit("getInitialGameState");
@@ -258,7 +276,8 @@
         // newlines in YouTube/WhatsApp or breaking a Unicode emoji in half.
         const prefix = msg.plainMessage.match(/^(?:(?:🇨🇳|🌐))?[🔊🔇💁🎤]\s*/u)?.[0] || "";
         const style = getComputedStyle(commentText);
-        measureContext.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+        // Paginate at the baseline size, independently of the previous page's fitted font.
+        measureContext.font = `${style.fontWeight} 176px ${style.fontFamily}`;
         const pages = paginateCaption(msg.plainMessage.slice(prefix.length),
           (text) => measureContext.measureText(text).width, 1760);
         commentQueue.push({ msg, prefix, pages });
@@ -274,7 +293,7 @@
 
       socket.on("tts_preparing", (event) => {
         const entry = findComment(event?.messageId);
-        if (entry === currentComment && entry) waitForSpeech();
+        if (entry === currentComment && entry && !entry.start && !entry.end) waitForSpeech();
       });
 
       socket.on("tts_started", (event) => {
@@ -307,9 +326,12 @@
       function setPhase(phase, label) {
         stateEl.dataset.phase = phase;
         stateEl.textContent = label;
+        if (phase === "preparing") captionEffects.pulse(true);
+        else if (currentComment.msg.tts) captionEffects.stopPulse();
       }
 
       function renderPage(index) {
+        captionEffects.finishTyping();
         const entry = currentComment;
         commentText.replaceChildren(...entry.pages[index].map((line) => {
           const element = document.createElement("div");
@@ -317,6 +339,7 @@
           element.textContent = line;
           return element;
         }));
+        captionEffects.fitText();
         pageLabel.textContent = `${index + 1} / ${entry.pages.length}`;
         // Keep the footer bounded even for unusually long system messages.
         pageDots.replaceChildren(...(entry.pages.length <= 12 ? entry.pages : []).map((_, page) => {
@@ -338,6 +361,10 @@
         commentOverlay.classList.add("visible");
         commentOverlay.setAttribute("aria-hidden", "false");
         renderPage(0);
+        if (!entry.msg.tts && !entry.arrivalShown) {
+          entry.arrivalShown = true;
+          captionEffects.pulse();
+        }
         if (entry.end) finishSpeech();
         else if (entry.start) followSpeech();
         else if (entry.msg.tts) waitForSpeech();
@@ -347,6 +374,10 @@
       function waitForSpeech() {
         clearDisplayTimers();
         setPhase("preparing", "準備語音…");
+        if (!currentComment.preparationShown) {
+          currentComment.preparationShown = true;
+          captionEffects.typeFirstPage();
+        }
         // Prevent a lost connection or failed child process from covering OBS forever.
         watchdog = setTimeout(() => readPages("語音暫時未能播放"), 180000);
       }
@@ -391,6 +422,7 @@
 
       function hideComment() {
         clearDisplayTimers();
+        captionEffects.cancel();
         currentComment.readComplete = true;
         commentOverlay.classList.remove("visible");
         commentOverlay.setAttribute("aria-hidden", "true");

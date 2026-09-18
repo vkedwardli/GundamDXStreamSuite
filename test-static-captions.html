@@ -28,15 +28,24 @@
     /* Keep the divider aligned with the real 640px caption area, independently of the artwork. */
     #message-layer::after { content: ''; position: absolute; top: 640px; left: 16px; right: 16px; height: 1px; background: rgba(115, 194, 225, .35); pointer-events: none; }
     #overlay.message-visible #message-layer { opacity: 1; }
-    .caption { height: 640px; border-top: 10px solid transparent; padding: 28px 80px 20px; display: flex; flex-direction: column; }
+    .caption-border-pulse {
+      position: absolute; inset: 14px; border-radius: 4px;
+      background:
+        linear-gradient(to right, var(--accent), transparent) left / 200px 100% no-repeat,
+        linear-gradient(to left, var(--accent), transparent) right / 200px 100% no-repeat,
+        linear-gradient(to bottom, var(--accent), transparent) top / 100% 200px no-repeat,
+        linear-gradient(to top, var(--accent), transparent) bottom / 100% 200px no-repeat;
+      opacity: 0; pointer-events: none;
+    }
+    .caption { position: relative; z-index: 1; height: 640px; border-top: 10px solid transparent; padding: 28px 80px 20px; display: flex; flex-direction: column; }
     .caption-header { display: flex; align-items: center; justify-content: space-between; gap: 36px; height: 82px; flex-shrink: 0; }
     #author { font-size: 58px; color: var(--accent); font-weight: 700; white-space: nowrap; }
     #state { font-size: 36px; border: 2px solid #455263; color: #c8d1dc; border-radius: 12px; padding: 10px 24px; white-space: nowrap; }
     #state[data-phase="preparing"] { color: #f8d48d; border-color: #8f713e; }
     #state[data-phase="speaking"] { color: #bcf5d5; border-color: #50765f; }
-    #caption-text { flex: 1; display: flex; flex-direction: column; justify-content: center; padding-bottom: 16px; font-size: 176px; font-weight: 800; line-height: 1.23; letter-spacing: 0; color: #fff; }
+    #caption-text { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: center; padding-bottom: 16px; font-size: 176px; font-weight: 800; line-height: 1.23; letter-spacing: 0; color: #fff; }
     .caption-line { white-space: pre; }
-    .caption-footer { height: 46px; display: flex; justify-content: space-between; align-items: center; font-size: 30px; color: #91a2b4; }
+    .caption-footer { height: 46px; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; font-size: 30px; color: #91a2b4; }
     #page-dots { display: flex; gap: 14px; }
     .dot { width: 42px; height: 8px; background: #374351; }
     .dot.current { background: var(--accent); }
@@ -71,7 +80,7 @@
       <div>
         <p class="eyebrow">GUNDAM DX / CAPTION STUDY</p>
         <h1>靜態字幕 · 大字分頁</h1>
-        <p class="intro">無留言時顯示 OBS。留言連同背景淡入，覆蓋頂部 760 px；播報完畢後淡出。</p>
+        <p class="intro">準備語音時邊框持續柔和閃動，首頁逐字顯示；開始播報即停止閃動，之後換頁即完整顯示。</p>
       </div>
       <button id="fullscreen" type="button">全螢幕預覽</button>
     </header>
@@ -114,7 +123,7 @@
       </div>
     </div>
     <div class="preview-note">
-      <span>模擬螢幕 1920 × 1080 · Overlay 1920 × 760 · 字幕區 1920 × 640 · 字體 176 px</span>
+      <span>模擬螢幕 1920 × 1080 · Overlay 1920 × 760 · 字幕區 1920 × 640 · 字體按每頁內容自動放大</span>
       <span>原版計分板 · 連邦 25 : 77 自護 · 自護六連勝</span>
     </div>
 
@@ -146,8 +155,9 @@
     <p id="description" role="status"></p>
     <p class="footnote">音訊由系統 edge-tts 預先下載，使用現有指令的聲線及設定；開啟此頁毋須連接 TTS 服務。只有準備延遲是模擬；「播報中」及結束狀態由實際音訊事件控制。分頁參考下載的句子時間，句內換頁按字數估算，並非逐字同步。語音完結後保留三秒，再淡出；連播間隔三秒（包括淡出），計分板一直保留。</p>
   </main>
+  <script src="./captionEffects.js"></script>
   <script>
-    // Standalone visual prototype. Production popout.html and TTS are unchanged.
+    // Standalone visual prototype, sharing arrival effects with popout.html.
     // Local MP3s use the same voices, rate and volume as the production commands.
     // Lines are authored for these five examples, not a production paginator.
     const samples = [
@@ -191,6 +201,8 @@
     const viewport = byId('viewport');
     const stage = byId('stage');
     const overlay = byId('overlay');
+    const captionEffects = createCaptionEffects(byId('caption-text'), byId('message-layer'));
+    let preparationShown = false;
     let sampleIndex = 0;
     let pageIndex = 0;
     let phase = 'idle';
@@ -213,6 +225,7 @@
     }
 
     function stopAudio() {
+      captionEffects.cancel();
       const previous = speechAudio;
       // Invalidate the old player before stopping it; late events must not affect a new message.
       speechAudio = null;
@@ -246,23 +259,37 @@
       byId('message-layer').setAttribute('aria-hidden', String(!visible));
       // Keep the outgoing text intact while its layer fades back to the OBS UI.
       if (visible) {
-      stage.style.setProperty('--accent', sample.color);
-      byId('author').textContent = sample.author;
-      byId('caption-text').replaceChildren(...sample.pages[pageIndex].map((line) => {
-        const element = document.createElement('div');
-        element.className = 'caption-line';
-        element.textContent = line;
-        return element;
-      }));
-      const labels = { preparing: '準備播報', speaking: paused ? '播報暫停' : '播報中', buffering: '音訊載入中', hold: '播報完畢', error: '音訊未能播放' };
-      byId('state').textContent = labels[phase];
-      byId('state').dataset.phase = phase;
-      byId('page-label').textContent = `${pageIndex + 1} / ${sample.pages.length}`;
-      byId('page-dots').replaceChildren(...sample.pages.map((_, index) => {
-        const dot = document.createElement('span');
-        dot.className = `dot${index === pageIndex ? ' current' : ''}`;
-        return dot;
-      }));
+        stage.style.setProperty('--accent', sample.color);
+        byId('author').textContent = sample.author;
+        const preparingFirstPage = phase === 'preparing' && pageIndex === 0;
+        if (!preparingFirstPage || !preparationShown) {
+          captionEffects.finishTyping();
+          byId('caption-text').replaceChildren(...sample.pages[pageIndex].map((line) => {
+            const element = document.createElement('div');
+            element.className = 'caption-line';
+            element.textContent = line;
+            return element;
+          }));
+          captionEffects.fitText();
+          if (preparingFirstPage) {
+            preparationShown = true;
+            captionEffects.typeFirstPage();
+          }
+        }
+        if (phase === 'preparing') captionEffects.pulse(true);
+        // Keep pulsing through initial buffering until the actual playing event.
+        else if (phase !== 'buffering') captionEffects.stopPulse();
+        if (paused) captionEffects.pause();
+        else captionEffects.resume();
+        const labels = { preparing: '準備播報', speaking: paused ? '播報暫停' : '播報中', buffering: '音訊載入中', hold: '播報完畢', error: '音訊未能播放' };
+        byId('state').textContent = labels[phase];
+        byId('state').dataset.phase = phase;
+        byId('page-label').textContent = `${pageIndex + 1} / ${sample.pages.length}`;
+        byId('page-dots').replaceChildren(...sample.pages.map((_, index) => {
+          const dot = document.createElement('span');
+          dot.className = `dot${index === pageIndex ? ' current' : ''}`;
+          return dot;
+        }));
       }
       byId('description').textContent = visible
         ? `${paused ? '已暫停 · ' : ''}${playbackError || sample.description}`
@@ -374,6 +401,7 @@
       paused = startPaused;
       playbackError = '';
       phase = 'preparing';
+      preparationShown = false;
       createAudio(samples[index]);
       render();
       const delay = Number(byId('prepare-seconds').value) * 1000;
