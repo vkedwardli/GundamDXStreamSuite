@@ -9,6 +9,7 @@ import { textToSpeech } from "./ttsService.js";
 import { TTSModel, Faction } from "./config.js";
 import { enableCam, showZDXPopup } from "./obsService.js";
 import { createMessage } from "./messageService.js";
+import { parseArgs } from "node:util";
 
 const recentlyDisabledCams = new Map();
 const MANUAL_DISABLE_LOCKOUT_MS = 10000; // 10 seconds
@@ -199,6 +200,135 @@ const gameState = {
   },
   lastIdleWarningTime: 0,
 };
+let streakRestoredAt = 0;
+const scoreFile = new URL("./score.txt", import.meta.url);
+const temporaryScoreFile = new URL("./score.txt.tmp", import.meta.url);
+let scorePersistenceReady = false;
+let hasManualScore = false;
+let lastSavedScore = "";
+
+// Restore the scoreboard once at startup, before clients connect or OCR starts.
+function restoreScoreFromArgs(args) {
+  if (args.length === 0) return;
+
+  const { values } = parseArgs({
+    args,
+    options: {
+      "fed-score": { type: "string", default: "0" },
+      "zeon-score": { type: "string", default: "0" },
+      "fed-streak": { type: "string", default: "0" },
+      "zeon-streak": { type: "string", default: "0" },
+    },
+  });
+  for (const [name, value] of Object.entries(values)) {
+    if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
+      throw new Error(`--${name} must be a non-negative whole number.`);
+    }
+    values[name] = Number(value);
+  }
+
+  const fedScore = values["fed-score"];
+  const zeonScore = values["zeon-score"];
+  const fedStreak = values["fed-streak"];
+  const zeonStreak = values["zeon-streak"];
+  if (fedStreak > 0 && zeonStreak > 0) {
+    throw new Error("Only one faction can have an active winning streak.");
+  }
+  if (fedStreak > fedScore || zeonStreak > zeonScore) {
+    throw new Error("A winning streak cannot exceed that faction's score.");
+  }
+  if (!Number.isSafeInteger(fedScore + zeonScore)) {
+    throw new Error("The combined score is too large.");
+  }
+
+  gameState.totalWins[Faction.FEDERATION.value] = fedScore;
+  gameState.totalWins[Faction.ZEON.value] = zeonScore;
+  gameState.streaks[Faction.FEDERATION.value] = fedStreak;
+  gameState.streaks[Faction.ZEON.value] = zeonStreak;
+  gameState.totalBattles = fedScore + zeonScore;
+  gameState.lastWinner = fedStreak > 0 ? Faction.FEDERATION
+    : zeonStreak > 0 ? Faction.ZEON : null;
+  // Restart the inactivity window without treating restoration as a new battle
+  // (which would suppress real results during the 30-second duplicate lockout).
+  streakRestoredAt = gameState.lastWinner ? Date.now() : 0;
+  hasManualScore = true;
+
+  console.log(
+    `Initial score: Federation ${fedScore} (streak ${fedStreak}), Zeon ${zeonScore} (streak ${zeonStreak}).`,
+  );
+}
+
+function saveScore() {
+  // A browser can request the initial state before the user clicks Live. Do not
+  // overwrite the previous process's saved scores with startup zeroes.
+  if (!scorePersistenceReady) return;
+  const score = {
+    totalWins: gameState.totalWins,
+    streaks: gameState.streaks,
+    totalBattles: gameState.totalBattles,
+    totalDraws: gameState.totalDraws,
+    lastOutcomeTime: gameState.lastOutcomeTime,
+  };
+  const serialized = JSON.stringify(score);
+  if (serialized === lastSavedScore) return;
+
+  try {
+    const saved = {
+      savedAt: new Date().toISOString(),
+      savedAtLocal: new Date().toString(),
+      ...score,
+    };
+    // Tiny, infrequent synchronous writes finish before Node can be closed.
+    // Replace the file only after the complete new snapshot is on disk.
+    fs.writeFileSync(temporaryScoreFile, JSON.stringify(saved, null, 2) + "\n", {
+      encoding: "utf8", flush: true,
+    });
+    fs.renameSync(temporaryScoreFile, scoreFile);
+    lastSavedScore = serialized;
+  } catch (error) {
+    console.error("Failed to save score.txt:", error.message);
+  }
+}
+
+// Called once per Node process, when Live is clicked and OBS status is known.
+function prepareScoresForStream(isResuming) {
+  if (scorePersistenceReady) return;
+  if (isResuming && !hasManualScore) {
+    try {
+      const saved = JSON.parse(fs.readFileSync(scoreFile, "utf8"));
+      const counts = [saved.totalWins?.federation, saved.totalWins?.zeon,
+        saved.streaks?.federation, saved.streaks?.zeon,
+        saved.totalBattles, saved.totalDraws, saved.lastOutcomeTime];
+      if (!counts.every(value => Number.isSafeInteger(value) && value >= 0) ||
+        typeof saved.savedAt !== "string" || !Number.isFinite(Date.parse(saved.savedAt)) ||
+        saved.streaks.federation > saved.totalWins.federation ||
+        saved.streaks.zeon > saved.totalWins.zeon ||
+        (saved.streaks.federation > 0 && saved.streaks.zeon > 0) ||
+        saved.totalBattles !== saved.totalWins.federation + saved.totalWins.zeon + saved.totalDraws) {
+        throw new Error("Invalid saved score data.");
+      }
+
+      gameState.totalWins = { federation: saved.totalWins.federation, zeon: saved.totalWins.zeon };
+      gameState.streaks = { federation: saved.streaks.federation, zeon: saved.streaks.zeon };
+      gameState.totalBattles = saved.totalBattles;
+      gameState.totalDraws = saved.totalDraws;
+      gameState.lastOutcomeTime = saved.lastOutcomeTime;
+      gameState.lastWinner = saved.streaks.federation > 0 ? Faction.FEDERATION
+        : saved.streaks.zeon > 0 ? Faction.ZEON : null;
+      streakRestoredAt = gameState.lastWinner ? Date.now() : 0;
+      console.log(`Restored score.txt saved at ${saved.savedAt}: Federation ${saved.totalWins.federation} ` +
+        `(streak ${saved.streaks.federation}), Zeon ${saved.totalWins.zeon} (streak ${saved.streaks.zeon}).`);
+    } catch (error) {
+      if (error.code === "ENOENT") {
+        console.log("No score.txt found; using the current scores.");
+      } else {
+        console.error("Could not restore score.txt; using the current scores:", error.message);
+      }
+    }
+  }
+  scorePersistenceReady = true;
+  broadcastGameState();
+}
 
 let idleShutdownCallback = null;
 let isShuttingDown = false;
@@ -226,6 +356,7 @@ const superStreakMessage = "數唔到喇，打L死人咩";
 
 // Broadcasts the current game state to the client via a prefixed console log
 const broadcastGameState = () => {
+  saveScore();
   if (io) {
     io.emit("battleResult", { state: gameState });
   }
@@ -573,7 +704,8 @@ async function startRecognizeBattleResults(onIdleShutdown, isPublic) {
       // --- 1. Proactive Streak Reset on Inactivity ---
       if (
         gameState.lastWinner &&
-        currentTime - gameState.lastOutcomeTime > STREAK_RESET_THRESHOLD_MS
+        currentTime - Math.max(gameState.lastOutcomeTime, streakRestoredAt) >
+          STREAK_RESET_THRESHOLD_MS
       ) {
         resetStreaks("prolonged inactivity");
         gameState.lastOutcomeTime = 0; // Reset time to prevent repeated logs
@@ -802,5 +934,7 @@ export {
   broadcastGameState,
   broadcastDummyGameState,
   markCameraAsDisabled,
+  restoreScoreFromArgs,
+  prepareScoresForStream,
   gameState,
 };

@@ -144,7 +144,7 @@
       }
 
       function updateStreak(container, prevCount, newCount, shouldPrepend) {
-        if (newCount > prevCount) {
+        if (newCount === prevCount + 1 && container.childElementCount === prevCount) {
           // Add a new star with animation
           const newStar = document.createElement("img");
           newStar.src = "./images/star.png";
@@ -159,15 +159,15 @@
           } else {
             container.appendChild(newStar);
           }
-        } else if (newCount < prevCount) {
-          // Rebuild the entire list if streak is reset or reduced
+        } else if (container.childElementCount !== newCount) {
+          // Restore the full count on first load, reconnect, or a streak reset.
           let starsHTML = "";
           for (let i = 0; i < newCount; i++) {
             starsHTML += '<img src="./images/star.png" />';
           }
           container.innerHTML = starsHTML;
         }
-        // If newCount === prevCount, do nothing.
+        // An unchanged count needs no DOM update when all stars are present.
       }
     </script>
   </body>

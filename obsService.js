@@ -7,6 +7,7 @@ import { obsDir, obsPath, OBS_PASSWORD } from "./config.js";
 import {
   startRecognizeBattleResults,
   stopRecognizeBattleResults,
+  prepareScoresForStream,
 } from "./score.js";
 import { io } from "./serverSetup.js";
 
@@ -46,7 +47,8 @@ export async function IsLiveStreaming() {
 
 export async function startOBSStreamingAndRecognition(onIdleShutdown, isPublic) {
   try {
-    if (!(await IsLiveStreaming())) {
+    const isResuming = await IsLiveStreaming();
+    if (!isResuming) {
       await obs.call("StartStream");
       console.log("OBS streaming started");
       await obs.call("StartVirtualCam");
@@ -54,6 +56,8 @@ export async function startOBSStreamingAndRecognition(onIdleShutdown, isPublic) 
     } else {
       console.log("OBS is streaming already, re-initiating recognition...");
     }
+    // Restore saved scores only when rejoining OBS's ongoing stream.
+    prepareScoresForStream(isResuming);
     // Always start recognition; it's a local process needed for both new and resumed streams.
     await startRecognizeBattleResults(onIdleShutdown, isPublic);
   } catch (error) {

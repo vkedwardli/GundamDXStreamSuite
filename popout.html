@@ -222,19 +222,12 @@
     <div class="scoreboard-container">
       <div class="faction-box">
         <div id="fed-streak" class="streak"></div>
-        <div id="fed-wins" class="wins">12</div>
+        <div id="fed-wins" class="wins">0</div>
       </div>
       <div class="divider">VS</div>
       <div class="faction-box">
-        <div id="zeon-wins" class="wins">34</div>
-        <div id="zeon-streak" class="streak">
-          <img src="./images/star.png" />
-          <img src="./images/star.png" />
-          <img src="./images/star.png" />
-          <img src="./images/star.png" />
-          <img src="./images/star.png" />
-          <img src="./images/star.png" />
-        </div>
+        <div id="zeon-wins" class="wins">0</div>
+        <div id="zeon-streak" class="streak"></div>
       </div>
     </div>
 
@@ -308,8 +301,8 @@
       });
 
       let previousState = {
-        streaks: { federation: 0, zeon: 6 },
-        totalWins: { federation: 12, zeon: 34 },
+        streaks: { federation: 0, zeon: 0 },
+        totalWins: { federation: 0, zeon: 0 },
       };
 
       socket.on("battleResult", (data) => {
@@ -514,7 +507,7 @@
       }
 
       function updateStreak(container, prevCount, newCount, isFederation) {
-        if (newCount > prevCount) {
+        if (newCount === prevCount + 1 && container.childElementCount === prevCount) {
           const newStar = document.createElement("img");
           newStar.src = "./images/star.png";
           newStar.classList.add("new-star");
@@ -523,7 +516,8 @@
           } else {
             container.appendChild(newStar);
           }
-        } else if (newCount < prevCount || newCount === 0) {
+        } else if (container.childElementCount !== newCount) {
+          // Restore the full count on first load, reconnect, or a streak reset.
           container.innerHTML = "";
           for (let i = 0; i < newCount; i++) {
             const star = document.createElement("img");

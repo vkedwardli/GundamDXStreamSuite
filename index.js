@@ -54,6 +54,7 @@ import {
   broadcastGameState,
   broadcastDummyGameState,
   markCameraAsDisabled,
+  restoreScoreFromArgs,
 } from "./score.js";
 import { startTimeAnnouncer } from "./timeAnnouncer.js";
 import {
@@ -499,6 +500,7 @@ schedule.scheduleJob("10 2 * * *", async () => {
 
 // --- Main Application ---
 async function main() {
+  restoreScoreFromArgs(process.argv.slice(2));
   const { server } = setupServer(handleClientConnection);
   // Establish single-server ownership before opening the forwarding journal.
   // A second process must exit on a port conflict instead of draining it too.

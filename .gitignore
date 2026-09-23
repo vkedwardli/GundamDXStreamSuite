@@ -20,6 +20,8 @@ lerna-debug.log*
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Runtime data
+/score.txt
+/score.txt.tmp
 pids
 *.pid
 *.seed

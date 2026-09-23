@@ -57,6 +57,46 @@ node index.js
 
 Once running, open the control panel in your browser to manage the stream.
 
+Scores and winning streaks are saved to `score.txt` beside `index.js` after each
+change, together with the save date/time (UTC and local), draws, and total matches.
+Keep this runtime file when deploying; it is ignored by Git.
+
+For a deployment restart, leave OBS streaming, close and restart Node, then click
+Live for the current stream visibility. When OBS is already streaming, the app
+restores `score.txt` before OCR resumes. Starting Node or opening the control page
+does not overwrite the saved file. The restore happens once per Node process;
+starting a fresh OBS stream does not load old scores. A missing or invalid file is
+logged and the current scores are used instead. The streak inactivity window starts
+again on resume; the last real result timestamp is retained to prevent a quick
+restart from bypassing the existing duplicate-result cooldown.
+Matches played while Node is stopped cannot be counted. On the first deployment
+of this feature, use the manual options below if there is no saved file yet.
+
+To manually override the saved scores, pass the previous scores and current
+winning streak. For example, Federation 25, Zeon 77, with Zeon on six consecutive wins:
+
+```bash
+node index.js --fed-score 25 --zeon-score 77 --zeon-streak 6
+```
+
+On Windows, the launcher accepts the same options:
+
+```cmd
+start.bat --fed-score 25 --zeon-score 77 --zeon-streak 6
+```
+
+The four options are `--fed-score`, `--zeon-score`, `--fed-streak`, and
+`--zeon-streak`. Omitted values default to zero. Values must be non-negative whole
+numbers; only one faction can have a positive streak, and its streak cannot exceed
+its score. Both `--fed-score 25` and `--fed-score=25` work.
+
+These options restore the scoreboard and the state used by score announcements.
+The six-minute streak inactivity window starts again when Node starts. Historical
+draws are not restored by these manual options; the initial match count is the sum
+of both scores. Explicit launch options take priority over `score.txt`. With no
+options, a fresh Node process starts at zero unless it resumes an ongoing OBS
+stream. The next detected result continues from the selected values.
+
 ## For Developers
 
 This project is highly customizable but contains hardcoded values specific to the original setup (e.g., screen coordinates for OCR in `score.js`, Windows paths in `systemUtils.js`). If you plan to adapt this project, you will need to modify these values to fit your environment.

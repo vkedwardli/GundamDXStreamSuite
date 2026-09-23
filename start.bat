@@ -8,6 +8,6 @@ REM Change to your project directory
 cd /d "%~dp0"
 
 REM Start your Node.js application
-node index.js
+node index.js %*
 
 cmd /k
