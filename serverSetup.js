@@ -171,7 +171,7 @@ export function setupServer(onClientConnected) {
   });
 
   server.listen(3000, () =>
-    console.log("HTTP Server with Socket.IO running on port 3000")
+    console.log(`HTTP Server with Socket.IO running on port 3000 (Node startup: ${process.uptime().toFixed(1)}s)`)
   );
 
   return { server, io };

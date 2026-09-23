@@ -1,4 +1,5 @@
-import { google } from "googleapis";
+// Load only YouTube: the package root eagerly loads hundreds of unrelated APIs.
+import { youtube as createYouTube } from "googleapis/build/src/apis/youtube/index.js";
 import { OAuth2Client } from "google-auth-library";
 import fs from "fs/promises";
 import { scheduler } from "node:timers/promises";
@@ -20,7 +21,7 @@ export const oAuth2Client = new OAuth2Client({
 });
 
 // YouTube API setup with OAuth2
-export const youtube = google.youtube({
+export const youtube = createYouTube({
   version: "v3",
   auth: oAuth2Client,
 });
