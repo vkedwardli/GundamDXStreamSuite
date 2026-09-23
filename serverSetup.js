@@ -6,6 +6,7 @@ import { Server } from "socket.io";
 import { oAuth2Client } from "./youtubeService.js";
 import { TOKEN_PATH as YOUTUBE_TOKEN_PATH } from "./config.js";
 import { getFormattedTime } from "./messageService.js";
+import { serveVideoAsset } from "./videoAsset.js";
 
 import { EventEmitter } from "events";
 const __dirname = import.meta.dirname;
@@ -75,6 +76,8 @@ export function setupServer(onClientConnected) {
         res.writeHead(400);
         res.end("No authorization code provided for YouTube OAuth");
       }
+    } else if (parsedUrl.pathname === "/fusion.mp4") {
+      await serveVideoAsset(req, res, path.join(__dirname, "fusion.mp4"));
     } else if (parsedUrl.pathname === "/remote") {
       const filePath = path.join(__dirname, "remote.html");
       try {

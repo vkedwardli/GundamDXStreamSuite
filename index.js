@@ -2,12 +2,13 @@ import { scheduler } from "node:timers/promises";
 import schedule from "node-schedule";
 import path from "node:path";
 import { WhatsAppYouTubeBridge } from "./whatsappYouTubeBridge.js";
+import { createFusionCommandHandler } from "./fusionCommand.js";
 
 // Configuration and Constants
 import { Faction, Megaphone, TTSModel } from "./config.js";
 
 // Services
-import { textToSpeech } from "./ttsService.js";
+import { textToSpeech, queueMonitorVideo } from "./ttsService.js";
 import {
   authorize as authorizeYouTube,
   checkLiveStreams,
@@ -80,6 +81,31 @@ const whatsappYouTubeBridge = new WhatsAppYouTubeBridge({
 // Install before any awaited startup work, so early webhooks are saved too.
 whatsappClient.setMessageHandler((message) => whatsappYouTubeBridge.accept(message));
 whatsappClient.setShutdownHandler(() => whatsappYouTubeBridge.close());
+const handleFusionCommand = createFusionCommandHandler({
+  publicGroupId: WA_PUBLIC_GROUP_ID,
+  testGroupId: WA_TEST_GROUP_ID,
+  getStreamState: () => ({ broadcastIds: currentBroadcastIds, streamType: currentStreamType }),
+  play: () => {
+    const streamKey = currentBroadcastIds.join(",");
+    console.log("WhatsApp !fusion: queued monitor video after earlier speech.");
+    return queueMonitorVideo(async () => {
+      // Do not carry an old stream's queued effect into a later stream.
+      if (currentBroadcastIds.join(",") !== streamKey) return;
+      const monitorId = socketIoInstance?.sockets.adapter.rooms.get("monitor-overlay")?.values().next().value;
+      const monitor = socketIoInstance?.sockets.sockets.get(monitorId);
+      if (!monitor) throw new Error("Monitor overlay is not connected.");
+      // The monitor acknowledges only after the clip ends or fails. Speech
+      // stays queued throughout loading AND playback, without a fixed sleep.
+      const result = await monitor.timeout(45000).emitWithAck("playFusion");
+      if (!result?.played) throw new Error(result?.error || "Video did not finish playing.");
+      console.log("Fusion video finished.");
+    });
+  },
+});
+// The WhatsApp client emits this only once per message ID, after receipt handling.
+whatsappClient.on("message", (message) => {
+  handleFusionCommand(message).catch((error) => console.error("WhatsApp !fusion failed:", error));
+});
 internalEvents.on("youtubeChatMessageObserved", (id) => {
   whatsappYouTubeBridge.observe(id).catch((error) =>
     console.error("Failed to record YouTube comment observation:", error));
@@ -88,6 +114,14 @@ internalEvents.on("youtubeChatMessageObserved", (id) => {
 // --- Socket.IO Client Connection Handler ---
 // This function will be passed to setupServer
 function handleClientConnection(client, io) {
+  // Only the local monitor plays the clip, avoiding sound from other chat pages.
+  if (client.handshake.auth?.monitorOverlay === true) {
+    client.join("monitor-overlay");
+    client.on("fusionPlaybackStatus", ({ status, error } = {}) => {
+      if (status === "failed") console.error("Fusion video playback failed:", error);
+      else if (status === "playing" || status === "ended") console.log(`Fusion video ${status}.`);
+    });
+  }
   // Emit initial status to newly connected client
   IsLiveStreaming()
     .then((isStreaming) => {

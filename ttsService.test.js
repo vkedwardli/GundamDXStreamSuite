@@ -9,7 +9,7 @@ import * as os from "node:os";
 import * as util from "node:util";
 import * as timing from "./ttsTiming.js";
 
-async function fixture({ generationFailure, playbackFailure, missingSrt, minimaxFailure } = {}) {
+async function fixture({ generationFailure, playbackFailure, missingSrt, minimaxFailure, onPlayback } = {}) {
   const events = [], downloads = [], plays = [], delays = [];
   const context = vm.createContext({
     Buffer,
@@ -44,6 +44,7 @@ async function fixture({ generationFailure, playbackFailure, missingSrt, minimax
       await fs.access(audioPath);
       if (playbackFailure) throw new Error("player failed");
       onStarted(2700);
+      await onPlayback?.();
     } },
   };
   const module = new vm.SourceTextModule(await fs.readFile(new URL("./ttsService.js", import.meta.url), "utf8"), { context });
@@ -55,7 +56,8 @@ async function fixture({ generationFailure, playbackFailure, missingSrt, minimax
     }, { context });
   });
   await module.evaluate();
-  return { speak: module.namespace.textToSpeech, events, downloads, plays, delays };
+  return { speak: module.namespace.textToSpeech, video: module.namespace.queueMonitorVideo,
+    events, downloads, plays, delays };
 }
 
 const speech = { text: '一行留言 "quote" $literal & symbols', model: "azure", voiceID: "zh-HK-HiuMaanNeural" };
@@ -108,4 +110,45 @@ test("MiniMax also supplies correlated playback events without Edge subtitles", 
   assert.equal(f.events.at(-1).status, "finished");
   assert.deepEqual(plain(f.events.find(e => e.name === "tts_started").cues), []);
   await assert.rejects(fs.access(path.dirname(f.plays[0])), { code: "ENOENT" });
+});
+
+test("monitor video waits for speech, then holds subsequent speech and clips until it ends", async () => {
+  const speechStarted = Promise.withResolvers();
+  const finishSpeech = Promise.withResolvers();
+  const videoStarted = Promise.withResolvers();
+  const finishVideo = Promise.withResolvers();
+  const order = [];
+  const f = await fixture({ onPlayback: async () => {
+    order.push("speech");
+    speechStarted.resolve();
+    await finishSpeech.promise;
+  } });
+  const drained = f.speak({ ...speech, messageId: "first" });
+  await speechStarted.promise;
+  await f.video(async () => {
+    order.push("video");
+    videoStarted.resolve();
+    await finishVideo.promise;
+  });
+  await f.speak({ ...speech, messageId: "second" });
+  await f.video(async () => { order.push("second video"); });
+  assert.deepEqual(order, ["speech"]);
+  finishSpeech.resolve();
+  await videoStarted.promise;
+  assert.deepEqual(order, ["speech", "video"]);
+  assert.equal(f.downloads.length, 1, "later speech is not prepared over the video");
+  assert.equal(f.events.at(-1).name, "tts_finished", "video has no fake speech events");
+  finishVideo.resolve();
+  await drained;
+  assert.deepEqual(order, ["speech", "video", "speech", "second video"]);
+});
+
+test("a missing/disconnected/failed monitor does not block the rest of the speech queue", async () => {
+  const f = await fixture();
+  const drained = f.video(async () => { throw new Error("Monitor did not acknowledge playback"); });
+  await f.speak({ ...speech, messageId: "after-video-failure" });
+  await drained;
+  assert.equal(f.plays.length, 1);
+  assert.equal(f.events.at(-1).messageId, "after-video-failure");
+  assert.equal(f.events.at(-1).status, "finished");
 });

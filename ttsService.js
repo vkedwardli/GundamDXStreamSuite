@@ -62,7 +62,19 @@ async function processTTSQueue() {
   }
 
   isPlaying = true;
-  let { text, model, voiceID, messageId } = audioQueue.shift();
+  const job = audioQueue.shift();
+  if (job.playVideo) {
+    try {
+      await job.playVideo();
+    } catch (error) {
+      console.error("Monitor video playback failed:", error.message);
+    } finally {
+      isPlaying = false;
+      if (audioQueue.length > 0) await processTTSQueue();
+    }
+    return;
+  }
+  let { text, model, voiceID, messageId } = job;
   let tempDirectory;
   let status = "failed";
 
@@ -155,6 +167,12 @@ async function processTTSQueue() {
     isPlaying = false;
     if (audioQueue.length > 0) await processTTSQueue();
   }
+}
+
+// Monitor clips share the speech queue so neither audio source talks over the other.
+export async function queueMonitorVideo(playVideo) {
+  audioQueue.push({ playVideo });
+  if (!isPlaying) await processTTSQueue();
 }
 
 export async function textToSpeech({ text, model, voiceID, messageId }) {

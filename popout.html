@@ -190,9 +190,22 @@
       .new-star {
         animation: new-star-animation 0.5s ease-out forwards;
       }
+      #fusion-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        background: #000;
+        opacity: 0;
+      }
+      #fusion-overlay video {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
     </style>
   </head>
   <body>
+    <div id="fusion-overlay" hidden></div>
     <div id="comment-overlay" aria-hidden="true">
       <section class="caption">
         <div class="caption-header">
@@ -231,7 +244,56 @@
       import { paginateCaption } from "./captionLayout.js";
       import { captionPageTimes, CAPTION_HOLD_MS, CAPTION_GAP_MS } from "./ttsTiming.js";
 
-      const socket = io();
+      const monitorOverlay = new URLSearchParams(location.search).get("monitor") === "1";
+      const socket = io({ auth: { monitorOverlay } });
+
+      // Only the arcade's Electron window registers this receiver. OBS browser
+      // sources and ordinary popout tabs must not also play the video/audio.
+      if (monitorOverlay) socket.on("playFusion", (acknowledge) => {
+        const layer = document.getElementById("fusion-overlay");
+        if (!layer.hidden) return acknowledge({ played: false, error: "Video already playing." });
+        const video = document.createElement("video");
+        const fadeMs = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 500;
+        let fade;
+        let finished = false;
+        const timeout = setTimeout(() => finish("Video playback timed out."), 30000);
+        async function finish(error) {
+          if (finished) return;
+          finished = true;
+          clearTimeout(timeout);
+          video.pause();
+          // Keep the final frame until it fades away, and hold the shared queue
+          // until then. A load failure before the first frame clears immediately.
+          const opacity = getComputedStyle(layer).opacity;
+          fade?.cancel();
+          if (Number(opacity) > 0) {
+            fade = layer.animate([{ opacity }, { opacity: 0 }],
+              { duration: fadeMs, easing: "ease-in-out", fill: "forwards" });
+            await fade.finished.catch(() => {});
+          }
+          video.removeAttribute("src");
+          video.load();
+          layer.replaceChildren();
+          layer.hidden = true;
+          fade?.cancel();
+          acknowledge({ played: !error, error });
+        }
+        video.addEventListener("ended", () => finish());
+        video.addEventListener("error", () => finish(video.error?.message || "Cannot load fusion.mp4."));
+        video.addEventListener("playing", () => {
+          if (finished) return;
+          fade = layer.animate([{ opacity: 0 }, { opacity: 1 }],
+            { duration: fadeMs, easing: "ease-in-out", fill: "forwards" });
+          socket.emit("fusionPlaybackStatus", { status: "playing" });
+        }, { once: true });
+        video.playsInline = true;
+        video.muted = false;
+        video.volume = 1;
+        video.src = "./fusion.mp4";
+        layer.replaceChildren(video);
+        layer.hidden = false;
+        video.play().catch((error) => finish(error.message));
+      });
 
       const fedWinsEl = document.getElementById("fed-wins");
       const zeonWinsEl = document.getElementById("zeon-wins");

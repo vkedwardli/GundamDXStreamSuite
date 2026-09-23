@@ -5,6 +5,7 @@ let win;
 
 function createWindow() {
   const iconPath = path.join(process.cwd(), 'images', 'lckzaku.png');
+  const { bounds } = screen.getPrimaryDisplay();
 
   // Explicitly set App User Model ID for Windows Taskbar grouping/icon
   if (process.platform === 'win32') {
@@ -12,10 +13,12 @@ function createWindow() {
   }
 
   win = new BrowserWindow({
-    width: 1920,
-    height: 760,
-    x: 0,
-    y: 0,
+    // The caption stays 760px tall; transparent space below it also lets a
+    // triggered video cover the entire monitor, including the taskbar area.
+    width: bounds.width,
+    height: bounds.height,
+    x: bounds.x,
+    y: bounds.y,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -25,11 +28,12 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      autoplayPolicy: 'no-user-gesture-required',
     },
   });
 
   // Load the popout scoreboard from the local server
-  win.loadURL('http://localhost:3000/popout.html');
+  win.loadURL('http://localhost:3000/popout.html?monitor=1');
 
   // Make the window click-through
   win.setIgnoreMouseEvents(true);
