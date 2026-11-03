@@ -57,6 +57,7 @@ async function fixture({ generationFailure, playbackFailure, missingSrt, minimax
   });
   await module.evaluate();
   return { speak: module.namespace.textToSpeech, video: module.namespace.queueMonitorVideo,
+    isBusy: module.namespace.isPlaybackBusy,
     events, downloads, plays, delays };
 }
 
@@ -123,8 +124,11 @@ test("monitor video waits for speech, then holds subsequent speech and clips unt
     speechStarted.resolve();
     await finishSpeech.promise;
   } });
+  assert.equal(f.isBusy(), false);
   const drained = f.speak({ ...speech, messageId: "first" });
+  assert.equal(f.isBusy(), true, "speech preparation blocks immediate playback");
   await speechStarted.promise;
+  assert.equal(f.isBusy(), true, "active speech blocks immediate playback");
   await f.video(async () => {
     order.push("video");
     videoStarted.resolve();
@@ -135,12 +139,14 @@ test("monitor video waits for speech, then holds subsequent speech and clips unt
   assert.deepEqual(order, ["speech"]);
   finishSpeech.resolve();
   await videoStarted.promise;
+  assert.equal(f.isBusy(), true, "active video and waiting jobs block immediate playback");
   assert.deepEqual(order, ["speech", "video"]);
   assert.equal(f.downloads.length, 1, "later speech is not prepared over the video");
   assert.equal(f.events.at(-1).name, "tts_finished", "video has no fake speech events");
   finishVideo.resolve();
   await drained;
   assert.deepEqual(order, ["speech", "video", "speech", "second video"]);
+  assert.equal(f.isBusy(), false);
 });
 
 test("a missing/disconnected/failed monitor does not block the rest of the speech queue", async () => {

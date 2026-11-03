@@ -3,14 +3,15 @@ import assert from "node:assert/strict";
 import { createFusionCommandHandler } from "./fusionCommand.js";
 import { OFFLINE_RESPONSES, parseWhatsAppCommand } from "./whatsappYouTubeBridge.js";
 
-function fixture() {
+function fixture({ busy = false, playback } = {}) {
   let stream = { broadcastIds: ["fed", "zeon"], streamType: "public" };
   let plays = 0;
   const replies = [];
   const now = 1800000000000;
   const handle = createFusionCommandHandler({
     publicGroupId: "public", testGroupId: "test", getStreamState: () => stream,
-    play: () => { plays++; }, now: () => now, random: () => 0,
+    isPlaybackBusy: () => busy,
+    play: () => { plays++; return playback; }, now: () => now, random: () => 0,
   });
   return {
     handle, replies, get plays() { return plays; },
@@ -30,7 +31,21 @@ test("fusion plays locally for the matching public/unlisted group", async () => 
   await f.handle(f.message());
   await f.handle(f.message({ from: "test", body: " ！FUSION " }));
   assert.equal(f.plays, 2);
+  assert.deepEqual(f.replies, ["去片!", "去片!"]);
   assert.equal(parseWhatsAppCommand("!fusion"), null, "not forwarded to YouTube");
+});
+
+test("fusion replies immediately with the queue status before playback finishes", async () => {
+  for (const busy of [false, true]) {
+    const playback = Promise.withResolvers();
+    const f = fixture({ busy, playback: playback.promise });
+    const handled = f.handle(f.message());
+    assert.equal(f.plays, 1);
+    assert.deepEqual(f.replies, [busy ? "準備去片" : "去片!"]);
+    playback.resolve();
+    await handled;
+    assert.equal(f.replies.length, 1, "no second reply after playback");
+  }
 });
 
 test("fusion ignores other groups, own messages, arguments, ordinary text, and stale sync history", async () => {

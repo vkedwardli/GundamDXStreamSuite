@@ -1,7 +1,7 @@
 import { OFFLINE_RESPONSES } from "./whatsappYouTubeBridge.js";
 
 export function createFusionCommandHandler({
-  publicGroupId, testGroupId, getStreamState, play, now = Date.now, random = Math.random,
+  publicGroupId, testGroupId, getStreamState, isPlaybackBusy, play, now = Date.now, random = Math.random,
 }) {
   return async function handleFusionCommand(message) {
     // 1. Guard: Only process messages from the allowed groups.
@@ -26,6 +26,11 @@ export function createFusionCommandHandler({
       (stream.streamType === "unlisted" && !isTestGroup)) return;
 
     // This is a local monitor effect; no contact lookup or YouTube comment.
-    return play();
+    // Check and enqueue without yielding, then reply without waiting for playback.
+    const queued = isPlaybackBusy();
+    await Promise.all([
+      play(),
+      message.reply(queued ? "準備去片" : "去片!"),
+    ]);
   };
 }

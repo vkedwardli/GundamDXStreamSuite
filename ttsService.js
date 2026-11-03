@@ -170,6 +170,10 @@ async function processTTSQueue() {
 }
 
 // Monitor clips share the speech queue so neither audio source talks over the other.
+export function isPlaybackBusy() {
+  return isPlaying || audioQueue.length > 0;
+}
+
 export async function queueMonitorVideo(playVideo) {
   audioQueue.push({ playVideo });
   if (!isPlaying) await processTTSQueue();

@@ -8,7 +8,7 @@ import { createFusionCommandHandler } from "./fusionCommand.js";
 import { Faction, Megaphone, TTSModel } from "./config.js";
 
 // Services
-import { textToSpeech, queueMonitorVideo } from "./ttsService.js";
+import { textToSpeech, queueMonitorVideo, isPlaybackBusy } from "./ttsService.js";
 import {
   authorize as authorizeYouTube,
   checkLiveStreams,
@@ -83,6 +83,7 @@ const whatsappYouTubeBridge = new WhatsAppYouTubeBridge({
 whatsappClient.setMessageHandler((message) => whatsappYouTubeBridge.accept(message));
 whatsappClient.setShutdownHandler(() => whatsappYouTubeBridge.close());
 const handleFusionCommand = createFusionCommandHandler({
+  isPlaybackBusy,
   publicGroupId: WA_PUBLIC_GROUP_ID,
   testGroupId: WA_TEST_GROUP_ID,
   getStreamState: () => ({ broadcastIds: currentBroadcastIds, streamType: currentStreamType }),
