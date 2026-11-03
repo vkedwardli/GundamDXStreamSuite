@@ -57,6 +57,20 @@ node index.js
 
 Once running, open the control panel in your browser to manage the stream.
 
+On the touch panel (`control.html`), double-tap the Gundam icon to show the
+Wi-Fi QR code. Scan it to join the hidden **LCKDX** network, or connect manually
+using WPA/WPA2 and password **clsclscls**. The dialog hides automatically after
+10 seconds. Close it sooner with **關閉**, tap
+outside it, or press Escape. Keyboard users can focus the icon and press Enter
+or Space to open it.
+
+The hotspot credentials are intentionally public. The QR image is bundled at
+`images/lckdx-wifi.svg`, so displaying it needs no external QR service. Its
+[Wi-Fi payload](https://github.com/zxing/zxing/wiki/Barcode-Contents#wi-fi-network-config-android-ios-11)
+is `WIFI:T:WPA;S:LCKDX;P:clsclscls;H:true;;` (`H:true` marks the SSID as hidden).
+If the network changes, replace the SVG with a QR code for the new credentials
+and update the network name shown in `control.html`.
+
 Scores and winning streaks are saved to `score.txt` beside `index.js` after each
 change, together with the save date/time (UTC and local), draws, and total matches.
 Keep this runtime file when deploying; it is ignored by Git.

@@ -114,15 +114,27 @@
       .logo-area {
         width: 380px;
         height: 380px;
-        /* background: #ffffff; */
+        min-height: 0;
+        flex: none;
+        padding: 0;
+        background: transparent;
+        border: 0;
         border-radius: 10px;
         display: flex;
         align-items: center;
         justify-content: center;
-        margin-right: 20px;
+        margin: 0 20px 0 0;
         color: #000000;
         font-size: 20px;
         text-align: center;
+        user-select: none;
+      }
+      .logo-area:active {
+        background: transparent;
+      }
+      .logo-area:focus-visible {
+        outline: 4px solid #b3d9ff;
+        outline-offset: 4px;
       }
       .logo-area img {
         max-width: 100%;
@@ -207,6 +219,41 @@
         background: #a71d2a;
       }
 
+      #wifiDialog {
+        box-sizing: border-box;
+        width: min(800px, calc(100vw - 80px));
+        max-height: calc(100vh - 80px);
+        padding: 32px;
+        background: #2a2a2a;
+        color: #ffffff;
+        border: 2px solid #555555;
+        border-radius: 20px;
+        text-align: center;
+      }
+      #wifiDialog::backdrop {
+        background: rgba(0, 0, 0, 0.7);
+      }
+      #wifiDialog h2 {
+        font-size: clamp(12px, 2.5vw, 36px);
+        white-space: nowrap;
+        margin: 0 0 24px;
+      }
+      .wifi-qr-code {
+        display: block;
+        width: min(100%, 46vh, 520px);
+        height: auto;
+        margin: 0 auto 16px;
+        background: #ffffff;
+      }
+      #wifiCloseBtn {
+        width: 100%;
+        min-height: 80px;
+        margin: 0;
+        padding: 12px 24px;
+        font-size: 32px;
+        line-height: 1.4;
+      }
+
       #megaphone {
         display: flex;
         justify-content: center; /* Horizontally center the text */
@@ -254,9 +301,22 @@
   <body>
     <div class="container">
       <div class="qr-logo-container">
-        <div class="logo-area" id="logoArea">
-          <img src="./images/lckzaku.png" style="border-radius: 10%" />
-        </div>
+        <button
+          type="button"
+          class="logo-area"
+          id="logoArea"
+          aria-label="連按兩下顯示 Wi-Fi QR code"
+          aria-haspopup="dialog"
+          aria-controls="wifiDialog"
+          title="連按兩下顯示 Wi-Fi QR code"
+        >
+          <img
+            src="./images/lckzaku.png"
+            alt="荔枝角 Gundam DX"
+            draggable="false"
+            style="border-radius: 10%"
+          />
+        </button>
         <div id="megaphone"></div>
         <div class="qr-container">
           <div class="qr-code fed" id="qrCode1">Federation QR</div>
@@ -284,6 +344,81 @@
       </div>
     </div>
 
+    <dialog
+      id="wifiDialog"
+      aria-labelledby="wifiDialogTitle"
+    >
+      <h2 id="wifiDialogTitle">掃描 QR code 連接 LCKDX Wi-Fi</h2>
+      <img
+        class="wifi-qr-code"
+        src="./images/lckdx-wifi.svg"
+        alt="連接 LCKDX 隱藏 Wi-Fi 的 QR code"
+        width="520"
+        height="520"
+      />
+      <form method="dialog">
+        <button type="submit" id="wifiCloseBtn" autofocus>
+          關閉 (<span id="wifiCountdown">10</span>s)
+        </button>
+      </form>
+    </dialog>
+
+    <script>
+      const logoArea = document.getElementById("logoArea");
+      const wifiDialog = document.getElementById("wifiDialog");
+      const wifiCountdown = document.getElementById("wifiCountdown");
+      let lastLogoTap = null;
+      let wifiHideTimer = null;
+      let wifiCountdownTimer = null;
+
+      // Touch browsers do not consistently emit dblclick, so track two clicks.
+      logoArea.addEventListener("click", (event) => {
+        const isDoubleTap =
+          lastLogoTap !== null && event.timeStamp - lastLogoTap <= 500;
+
+        // Keyboard and assistive-technology activation has a click detail of 0.
+        if (event.detail === 0 || isDoubleTap) {
+          lastLogoTap = null;
+          if (!wifiDialog.open) {
+            wifiDialog.showModal();
+            clearTimeout(wifiHideTimer);
+            clearInterval(wifiCountdownTimer);
+            const hideAt = performance.now() + 10000;
+            wifiCountdown.textContent = "10";
+            wifiCountdownTimer = setInterval(() => {
+              wifiCountdown.textContent = Math.max(
+                0,
+                Math.ceil((hideAt - performance.now()) / 1000)
+              );
+            }, 250);
+            wifiHideTimer = setTimeout(() => wifiDialog.close(), 10000);
+          }
+        } else {
+          lastLogoTap = event.timeStamp;
+        }
+      });
+
+      wifiDialog.addEventListener("close", () => {
+        clearTimeout(wifiHideTimer);
+        clearInterval(wifiCountdownTimer);
+        wifiHideTimer = null;
+        wifiCountdownTimer = null;
+        lastLogoTap = null;
+      });
+
+      wifiDialog.addEventListener("click", (event) => {
+        if (event.target !== wifiDialog) return;
+        const bounds = wifiDialog.getBoundingClientRect();
+        if (
+          event.clientX < bounds.left ||
+          event.clientX > bounds.right ||
+          event.clientY < bounds.top ||
+          event.clientY > bounds.bottom
+        ) {
+          wifiDialog.close();
+        }
+      });
+    </script>
     <script src="./socket.io.min.js"></script>
     <script>
       const socket = io();
