@@ -47,6 +47,9 @@ export async function authorize() {
 
     const authUrl = oAuth2Client.generateAuthUrl({
       access_type: "offline",
+      // Reauthorization must also renew offline access, not just the short-lived
+      // access token. Google may omit a refresh token without fresh consent.
+      prompt: "consent",
       scope: SCOPES,
     });
     console.log("Authorize this app by visiting this URL:", authUrl);

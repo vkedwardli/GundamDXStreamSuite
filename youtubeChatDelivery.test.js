@@ -88,3 +88,42 @@ test("a not-yet-ready chat can retry, but a missing or ended stream cannot", asy
     await assert.rejects(ended.sender.send("video", "hello"), { outcome: "rejected" });
   }
 });
+
+test("unspecified rejections retain API diagnostics without request credentials", async () => {
+  const failure = apiError(400, "ERROR_UNSPECIFIED");
+  Object.assign(failure.response.data.error, {
+    message: "Request contains an invalid argument.", status: "INVALID_ARGUMENT",
+  });
+  Object.assign(failure.response.data.error.errors[0], {
+    domain: "youtube.api.v3.LiveChatMessageInsertResponse.Error", secret: "not-for-logs",
+  });
+  failure.config = { headers: { Authorization: "Bearer not-for-logs" } };
+  const { sender, requests } = fixture({ insertError: failure });
+  const text = "!gossip 師傅加油！ !:Edward Li";
+  await assert.rejects(sender.send("video", text), (error) => {
+    assert.equal(error.outcome, "rejected");
+    assert.equal(error.reason, "ERROR_UNSPECIFIED");
+    assert.deepEqual(JSON.parse(JSON.stringify(error.diagnostics)), {
+      httpStatus: 400, apiStatus: "INVALID_ARGUMENT",
+      message: "Request contains an invalid argument.",
+      errors: [{ reason: "ERROR_UNSPECIFIED", domain: "youtube.api.v3.LiveChatMessageInsertResponse.Error" }],
+      phase: "insert", videoId: "video", liveChatId: "chat-id", messageLength: [...text].length,
+    });
+    assert.ok(!JSON.stringify(error.diagnostics).includes("not-for-logs"));
+    return true;
+  });
+  assert.equal(requests[1][1].resource.snippet.textMessageDetails.messageText, text);
+  assert.equal(requests.filter(([type]) => type === "insert").length, 1);
+});
+
+test("diagnostics distinguish lookup failures from comment insertion failures", async () => {
+  const { sender, requests } = fixture({ lookupError: apiError(401, "authError") });
+  await assert.rejects(sender.send("video", "hello"), (error) => {
+    assert.equal(error.diagnostics.phase, "lookup");
+    assert.equal(error.diagnostics.httpStatus, 401);
+    assert.equal(error.diagnostics.videoId, "video");
+    assert.equal(error.diagnostics.liveChatId, undefined);
+    return true;
+  });
+  assert.equal(requests.length, 1);
+});

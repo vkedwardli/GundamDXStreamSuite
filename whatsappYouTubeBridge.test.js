@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { WhatsAppYouTubeBridge, parseWhatsAppCommand, OFFLINE_RESPONSES } from "./whatsappYouTubeBridge.js";
-import { YouTubeDeliveryError } from "./youtubeChatDelivery.js";
+import { YouTubeDeliveryError, createYouTubeChatSender } from "./youtubeChatDelivery.js";
 
 const PUBLIC = "public@g.us";
 const TEST = "test@g.us";
@@ -44,6 +44,78 @@ test("parses supported commands, preserves text, and ignores ordinary chat", () 
   assert.deepEqual(parseWhatsAppCommand("！msay  多謝"), {
     faction: "fed", content: "！msay  多謝", tts: true,
   });
+});
+
+test("gossip failures persist and log API details across restart without reposting", async (t) => {
+  const logs = [];
+  const texts = [];
+  const sender = createYouTubeChatSender({
+    videos: { list: async () => ({ data: { items: [{
+      liveStreamingDetails: { activeLiveChatId: "chat-id" },
+    }] } }) },
+    liveChatMessages: { insert: async (request) => {
+      texts.push(request.resource.snippet.textMessageDetails.messageText);
+      throw Object.assign(new Error("Request contains an invalid argument."), {
+        config: { headers: { Authorization: "Bearer secret-token" } },
+        response: { status: 400, data: { error: {
+          status: "INVALID_ARGUMENT", message: "Request contains an invalid argument.",
+          errors: [{ reason: "ERROR_UNSPECIFIED" }],
+        } } },
+      });
+    } },
+  });
+  const f = await fixture(t, {
+    send: (videoId, text) => sender.send(videoId, text),
+    logger: { log: (message) => logs.push(message), error() {} },
+  });
+  await f.bridge.accept(f.message("first", "!gossip 師傅加油"));
+  await f.bridge.accept(f.message("second", "!gossip 師傅加油！"));
+  await f.bridge.tick();
+  await f.bridge.tick();
+  const restarted = new WhatsAppYouTubeBridge(f.options);
+  await restarted.tick();
+  assert.deepEqual(texts, ["!gossip 師傅加油 !:Lo~", "!gossip 師傅加油！ !:Lo~"]);
+  const stored = await f.stored();
+  for (const record of stored) {
+    assert.equal(record.status, "rejected");
+    assert.equal(record.reason, "ERROR_UNSPECIFIED");
+    assert.equal(record.attempts, 1);
+    assert.equal(record.diagnostics.httpStatus, 400);
+    assert.equal(record.diagnostics.phase, "insert");
+    assert.equal(record.diagnostics.message, "Request contains an invalid argument.");
+  }
+  assert.ok(logs.some((line) => line.includes("http=400") && line.includes("phase=insert")));
+  assert.ok(!JSON.stringify({ stored, logs }).includes("secret-token"));
+});
+
+test("permanent failure logs are concise, while the journal retains full diagnostics", async (t) => {
+  const logs = [];
+  const message = `Request failed.\n${"More API detail. ".repeat(30)}`;
+  const diagnostics = {
+    phase: "insert", httpStatus: 400, apiStatus: "INVALID_ARGUMENT", message,
+    liveChatId: "long-chat-id", messageLength: 25,
+    errors: [{ reason: "ERROR_UNSPECIFIED", domain: "youtube.api.v3", message }],
+  };
+  const f = await fixture(t, {
+    logger: { log: (line) => logs.push(line), error() {} },
+    send: async () => { throw new YouTubeDeliveryError(message, {
+      outcome: "rejected", reason: "ERROR_UNSPECIFIED", diagnostics,
+    }); },
+    notify: async () => ({ id: { _serialized: "notice" } }),
+  });
+  await f.bridge.accept(f.message());
+  await f.bridge.tick();
+  const failure = logs.find((line) => line.includes("http=400"));
+  assert.match(failure, /phase=insert, http=400, apiStatus=INVALID_ARGUMENT/);
+  assert.match(failure, /message="Request failed\. More API detail\./);
+  assert.match(failure, /\.\.\."\)$/);
+  assert.ok(!failure.includes("\n"));
+  assert.ok(!failure.includes("long-chat-id"));
+  assert.ok(!failure.includes("diagnostics={"));
+  assert.ok(failure.length < 400);
+  await f.bridge.notifyPending();
+  assert.equal(logs.filter((line) => line.includes("http=400")).length, 1);
+  assert.deepEqual((await f.stored())[0].diagnostics, diagnostics);
 });
 
 test("receipt is persisted before sending; concurrent duplicates and restarts do not repost", async (t) => {
@@ -510,6 +582,55 @@ test("a content rejection sends one quoted WhatsApp warning, including across re
   await restarted.notifyPending();
   assert.equal(notices.length, 1);
 });
+
+for (const [outcome, finalStatus] of [
+  ["rejected", "rejected"], ["uncertain", "uncertain"], ["retry", "failed"],
+]) {
+  test(`ERROR_UNSPECIFIED ${finalStatus} replies once without guessing the cause`, async (t) => {
+    const notices = [];
+    let sends = 0;
+    const f = await fixture(t, {
+      maxAttempts: 2,
+      send: async () => {
+        sends += 1;
+        throw new YouTubeDeliveryError("Request failed.", { outcome, reason: "ERROR_UNSPECIFIED" });
+      },
+      notify: async (...args) => { notices.push(args); return { id: { _serialized: "notice" } }; },
+    });
+    const message = { ...f.message("unspecified", "!gossip 師傅加油"), author: "sender@s.whatsapp.net" };
+    await f.bridge.accept(message);
+    await f.bridge.tick();
+    if (outcome === "retry") {
+      await f.bridge.notifyPending();
+      assert.equal(notices.length, 0); // Safe retries can still succeed.
+      f.advance(2000);
+      await f.bridge.tick();
+    }
+    await Promise.all([f.bridge.notifyPending(), f.bridge.notifyPending()]);
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0][0], PUBLIC);
+    assert.deepEqual(notices[0][2], { replyTo: "unspecified", replyToSender: message.author });
+    assert.match(notices[0][1], /YouTube.*具體原因/);
+    assert.match(notices[0][1], /系統唔會自動重發/);
+    assert.doesNotMatch(notices[0][1], /審核|權限|ERROR_UNSPECIFIED/);
+    if (outcome === "uncertain") {
+      assert.match(notices[0][1], /未能確認.*有冇成功發送/);
+      assert.doesNotMatch(notices[0][1], /稍後再試/);
+    } else {
+      assert.match(notices[0][1], /未能發送到 YouTube/);
+      assert.match(notices[0][1], /稍後再試/);
+    }
+    const [record] = await f.stored();
+    assert.equal(record.status, finalStatus);
+    assert.equal(record.notification.status, "sent");
+    const restarted = new WhatsAppYouTubeBridge(f.options);
+    await restarted.accept(message);
+    await restarted.tick();
+    await restarted.notifyPending();
+    assert.equal(notices.length, 1);
+    assert.equal(sends, outcome === "retry" ? 2 : 1);
+  });
+}
 
 test("an unobserved comment warns its original test group after 90 seconds without reposting", async (t) => {
   const notices = [];

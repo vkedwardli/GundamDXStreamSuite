@@ -49,6 +49,57 @@ Gundam DX Stream Suite is an automation tool for live streaming "Mobile Suit Gun
     - Run the app for the first time: `node index.js`.
     - Follow the on-screen link to log in with your Google account and allow access. A `token.json` file will be saved for future use.
 
+### YouTube chat diagnostics and reauthorization
+
+WhatsApp commands enter the bridge in `index.js`, are saved and dispatched by
+`whatsappYouTubeBridge.js`, and reach `youtube.liveChatMessages.insert` through
+`youtubeService.js` and `youtubeChatDelivery.js`. Sending uses OAuth, not an API
+key. `CLIENT_ID` and `CLIENT_SECRET` in `.env` identify the Google OAuth client;
+`token.json` holds the authorized account's access and refresh tokens.
+
+On the streaming PC, from the application directory, run:
+
+```bash
+npm run diagnose:youtube -- PdYfjzdHR_g
+```
+
+Use the current target video ID. This checks token refresh, the authorized
+YouTube channel, and the video's active chat without posting or changing the
+saved credentials. Successful lookups do not prove permission to post.
+`invalid_grant` during refresh calls for reauthorization. Ordinary access-token
+expiry is handled automatically by the Google client while the refresh token
+remains valid. External OAuth apps in Google's **Testing** publishing status
+receive refresh tokens that expire after seven days for the YouTube scope.
+
+To renew access, stop the Node app, move `token.json` to a private backup location
+outside the repository, and start the app again. Open the printed authorization
+link **on the streaming PC**, sign in to the intended YouTube channel, and grant
+access. The callback at `http://localhost:3000/oauth2callback` saves a new
+`token.json`; the authorization URL requests offline access and fresh consent.
+If replacing the OAuth client itself, update `CLIENT_ID` and `CLIENT_SECRET`
+in `.env` first and register that exact callback URL in Google Cloud Console.
+An API key cannot authorize chat posting.
+
+Delivery diagnostics are always enabled. Failures log the operation (`lookup`
+or `insert`), HTTP status, API status, reason, and a single-line API message
+limited to 200 characters. Notification updates do not repeat the diagnostic
+summary. The outbox journal retains the full API error details, including chat
+ID and message length for insert failures. Request credentials are excluded.
+`ERROR_UNSPECIFIED` alone does not identify token expiry, moderation, or another
+cause; inspect these details before deciding how to recover.
+
+An `ERROR_UNSPECIFIED` rejection sends a quoted Cantonese reply to the original
+WhatsApp command explaining that delivery failed for an unknown reason and the
+user can try later. An uncertain submission instead says delivery could not be
+confirmed, without encouraging a duplicate post. Retryable failures wait until
+safe retries are exhausted before notifying. Replies use the existing journal
+to prevent duplicates across restarts and redelivery, and expire after ten minutes.
+Previously rejected commands remain rejected after reauthorization.
+
+References: [YouTube authorization](https://developers.google.com/youtube/v3/guides/authentication),
+[OAuth token expiry](https://developers.google.com/identity/protocols/oauth2#expiration),
+[OAuth reauthorization](https://developers.google.com/identity/protocols/oauth2/web-server#handlingresponse).
+
 ### Running the Application
 
 ```bash

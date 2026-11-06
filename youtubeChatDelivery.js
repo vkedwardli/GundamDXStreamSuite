@@ -1,15 +1,32 @@
 // Insert retries must distinguish a definite rejection from an unknown outcome.
 // See https://developers.google.com/youtube/v3/live/docs/liveChatMessages/insert
 export class YouTubeDeliveryError extends Error {
-  constructor(message, { outcome, reason, retryAfterMs = 0, cause } = {}) {
+  constructor(message, { outcome, reason, retryAfterMs = 0, diagnostics, cause } = {}) {
     super(message, { cause });
     this.outcome = outcome;
     this.reason = reason;
     this.retryAfterMs = retryAfterMs;
+    this.diagnostics = diagnostics;
   }
 }
 
-function classifyFailure(error, phase) {
+// Keep only API response fields: Gaxios errors also contain OAuth credentials
+// in their request config/headers and must never be serialized wholesale.
+export function describeYouTubeFailure(error) {
+  const apiError = error.response?.data?.error;
+  const status = Number(error.response?.status || apiError?.code || error.code);
+  const errors = apiError?.errors || error.errors || [];
+  return {
+    httpStatus: Number.isFinite(status) && status > 0 ? status : null,
+    apiStatus: apiError?.status || null,
+    message: typeof apiError === "string" ? apiError : apiError?.message || error.message,
+    errors: errors.map(({ reason, domain, message, location, locationType }) => ({
+      reason, domain, message, location, locationType,
+    })),
+  };
+}
+
+function classifyFailure(error, phase, context) {
   const status = Number(error.response?.status || error.code);
   const reasons = (error.response?.data?.error?.errors || error.errors || [])
     .map((item) => item.reason);
@@ -48,6 +65,7 @@ function classifyFailure(error, phase) {
   }
   return new YouTubeDeliveryError(error.message, {
     outcome, reason, retryAfterMs, cause: error,
+    diagnostics: { ...describeYouTubeFailure(error), phase, ...context },
   });
 }
 
@@ -64,7 +82,7 @@ export function createYouTubeChatSender(youtube, { transformText = (text) => tex
             part: ["liveStreamingDetails"], id: videoId,
           }, { retry: false, timeout: 15000 });
         } catch (error) {
-          throw classifyFailure(error, "lookup");
+          throw classifyFailure(error, "lookup", { videoId });
         }
         const video = response.data.items?.[0];
         const details = video?.liveStreamingDetails;
@@ -83,18 +101,23 @@ export function createYouTubeChatSender(youtube, { transformText = (text) => tex
       }
 
       let response;
+      let messageText;
       try {
+        messageText = transformText(message);
         response = await youtube.liveChatMessages.insert({
           part: ["snippet"],
           resource: {
             snippet: {
               liveChatId, type: "textMessageEvent",
-              textMessageDetails: { messageText: transformText(message) },
+              textMessageDetails: { messageText },
             },
           },
         }, { retry: false, timeout: 15000 });
       } catch (error) {
-        throw classifyFailure(error, "insert");
+        throw classifyFailure(error, "insert", {
+          videoId, liveChatId,
+          messageLength: typeof messageText === "string" ? [...messageText].length : null,
+        });
       }
       if (!response.data?.id) {
         throw new YouTubeDeliveryError("YouTube returned no comment ID.", {

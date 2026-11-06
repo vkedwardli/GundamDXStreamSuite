@@ -145,12 +145,21 @@ export class WhatsAppYouTubeBridge {
     return result;
   }
 
-  _log(record) {
+  _log(record, includeDiagnostics = true) {
+    // Permanent failure summary. Keep full API details in the journal, and
+    // avoid repeating them for notification-only state changes.
+    const diagnostics = includeDiagnostics && record.diagnostics;
+    const message = diagnostics?.message?.replace(/\s+/g, " ").trim();
+    const summary = message?.length > 200 ? `${message.slice(0, 197)}...` : message;
     this.logger.log(`WhatsApp → YouTube ${record.key}: ${record.status}` +
       ` (attempts=${record.attempts}, video=${record.videoId || "waiting"}` +
       `${record.youtubeId ? `, comment=${record.youtubeId}` : ""}` +
       `${record.notification ? `, notification=${record.notification.status}` : ""}` +
-      `${record.reason ? `, reason=${record.reason}` : ""})`);
+      `${record.reason ? `, reason=${record.reason}` : ""}` +
+      `${diagnostics?.phase ? `, phase=${diagnostics.phase}` : ""}` +
+      `${diagnostics?.httpStatus ? `, http=${diagnostics.httpStatus}` : ""}` +
+      `${diagnostics?.apiStatus ? `, apiStatus=${diagnostics.apiStatus}` : ""}` +
+      `${summary ? `, message=${JSON.stringify(summary)}` : ""})`);
   }
 
   async _update(key, changes, expectedStatuses) {
@@ -159,7 +168,7 @@ export class WhatsAppYouTubeBridge {
       if (!record || (expectedStatuses && !expectedStatuses.includes(record.status))) return record;
       const updated = { ...record, ...changes, updatedAt: this.now() };
       await this._save(this.records.map((item) => item.key === key ? updated : item));
-      this._log(updated);
+      this._log(updated, changes.diagnostics !== undefined);
       return updated;
     });
   }
@@ -305,7 +314,7 @@ export class WhatsAppYouTubeBridge {
     // Commit the attempt BEFORE making the request. A crash anywhere after
     // this write leaves an uncertain outcome and must never cause a repost.
     const sending = await this._update(record.key, {
-      videoId, status: "inflight", attempts: record.attempts + 1, reason: null,
+      videoId, status: "inflight", attempts: record.attempts + 1, reason: null, diagnostics: null,
     });
     let result;
     let failure;
@@ -321,6 +330,7 @@ export class WhatsAppYouTubeBridge {
         status: canRetry ? "pending" : failure.outcome === "retry" ? "failed"
           : failure.outcome === "rejected" ? "rejected" : "uncertain",
         reason: failure.reason || failure.message,
+        diagnostics: failure.diagnostics || { message: failure.message },
         nextAttemptAt: this.now() + Math.max(2000 * 2 ** (sending.attempts - 1), failure.retryAfterMs || 0),
       });
     } else {
@@ -346,6 +356,14 @@ export class WhatsAppYouTubeBridge {
     if (record.status === "offline") return record.offlineReply;
     if (record.status === "unconfirmed" && !this._observedIds.has(observationKey(record.youtubeId))) {
       return "⚠️ 呢條指令嘅留言暫時未喺 YouTube 直播聊天室出現，可能被 YouTube 審核攔截，亦可能係聊天室同步延遲。系統唔會自動重發。";
+    }
+    if (record.reason === "ERROR_UNSPECIFIED") {
+      if (record.status === "uncertain") {
+        return "⚠️ YouTube 回傳咗未有具體原因嘅錯誤，暫時未能確認呢條指令嘅留言有冇成功發送。為免重複留言，系統唔會自動重發。";
+      }
+      if (["rejected", "failed"].includes(record.status)) {
+        return "⚠️ 呢條指令嘅留言未能發送到 YouTube，YouTube 未有提供具體原因。系統唔會自動重發，請稍後再試。";
+      }
     }
     if (record.status !== "rejected") return null;
     if (record.reason === "messageTextInvalid") {
@@ -384,7 +402,7 @@ export class WhatsAppYouTubeBridge {
       } };
       // Save before sending: a crash or ambiguous error must not spam replies.
       await this._save(this.records.map((item) => item.key === record.key ? updated : item));
-      this._log(updated);
+      this._log(updated, false);
       return expired ? null : { record: updated, text };
     });
     if (!claimed) return;
