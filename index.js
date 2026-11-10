@@ -58,6 +58,7 @@ import {
 } from "./score.js";
 import { installShutdownHandlers } from "./shutdown.js";
 import { announceStreamLinks } from "./streamAnnouncements.js";
+import { startMorningWeather } from "./morningWeather.js";
 import { startTimeAnnouncer } from "./timeAnnouncer.js";
 import {
   sendTextToDXGroup,
@@ -489,7 +490,9 @@ schedule.scheduleJob("10 2 * * *", async () => {
 });
 
 // One owner waits for both local services; OBS continues broadcasting.
+let stopMorningWeather = () => {};
 installShutdownHandlers([
+  () => stopMorningWeather(),
   () => stopRecognizeBattleResults(),
   () => whatsappClient.destroy(),
 ]);
@@ -506,6 +509,11 @@ async function main() {
   });
 
   startTimeAnnouncer();
+  stopMorningWeather = startMorningWeather({
+    client: whatsappClient,
+    groupId: WA_PUBLIC_GROUP_ID,
+    directory: path.join(whatsappClient.storeDir, "weather-announcements"),
+  });
   await whatsappYouTubeBridge.initialize();
   await authorizeYouTube();
   whatsappYouTubeBridge.start();

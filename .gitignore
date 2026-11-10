@@ -3,6 +3,7 @@
 .wwebjs_cache
 .wacli/
 **/youtube-outbox/
+**/weather-announcements/
 
 # Google API token
 token.json

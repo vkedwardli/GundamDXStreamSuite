@@ -131,6 +131,29 @@ stream links are sent in the background after OCR starts; if WhatsApp is not
 ready, the announcements are skipped. Hourly announcements are scheduled before
 optional desktop/speaker setup finishes.
 
+On a Node startup from **06:00 inclusive to before 12:00 noon Hong Kong time**, the app sends one morning
+weather brief to `WA_PUBLIC_GROUP_ID` after WhatsApp becomes ready, regardless of
+stream visibility or whether a stream has started. It uses the supplied HKO
+formatter: temperature versus yesterday, current Observatory temperature, today's
+forecast when available, active warnings, and high visibility at Central (falling
+back to Sai Wan Ho). Unavailable optional readings are omitted.
+Overnight restarts (00:00–05:59), including the previous operation day's 1am
+session, are skipped entirely and do not queue an announcement for 6am.
+
+Weather work runs in the background. Logs prefixed `WhatsApp morning weather
+YYYYMMDD:` report waiting, fetching, sending, sent (with message ID), skipped, or
+failure. HKO fetch failures retry every five minutes until noon. If WhatsApp
+isn't ready before noon, the announcement is skipped; a continuously running
+process does not schedule another announcement the next day.
+
+Daily send records live in `weather-announcements/` within the configured wacli
+session directory and survive Node restarts. Keep this folder during deployment.
+A send attempt is recorded before dispatch; failed or uncertain sends are logged
+and not automatically repeated that day, avoiding duplicate public messages after
+a crash or lost acknowledgement. A returned message ID confirms WhatsApp accepted
+the send, not that every group member received or read it. This announcement
+checks outbound WhatsApp delivery; it does not verify the incoming YouTube bridge.
+
 While WhatsApp sync is running, the adapter checks local authentication every
 15 seconds using a read-only command. If wacli reports `authenticated: false`,
 the adapter stops its own sync process to release the store and starts QR login
