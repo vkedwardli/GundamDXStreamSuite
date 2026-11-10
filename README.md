@@ -126,6 +126,35 @@ Scores and winning streaks are saved to `score.txt` beside `index.js` after each
 change, together with the save date/time (UTC and local), draws, and total matches.
 Keep this runtime file when deploying; it is ignored by Git.
 
+WhatsApp login and stream-link announcements do not gate stream startup. New
+stream links are sent in the background after OCR starts; if WhatsApp is not
+ready, the announcements are skipped. Hourly announcements are scheduled before
+optional desktop/speaker setup finishes.
+
+While WhatsApp sync is running, the adapter checks local authentication every
+15 seconds using a read-only command. If wacli reports `authenticated: false`,
+the adapter stops its own sync process to release the store and starts QR login
+without restarting Node or OBS. Failed QR attempts retry. A failed status read
+is logged and does not itself trigger reauthentication. Detection depends on
+wacli recording the remote logout in its local session store; an old device row
+that still reports authenticated cannot prove the phone still lists the device.
+
+Use Ctrl+C for a deployment restart: one shutdown handler stops OCR and waits
+for the app's WhatsApp child processes and outbox cleanup, leaving OBS running.
+Force-closing the console can bypass this cleanup. Do not delete the WhatsApp
+session database or lock files to work around a running process.
+
+On Windows, `start.bat` disables QuickEdit for its console using
+`disableQuickEdit.ps1`, without changing registry settings. This reduces the
+risk of pausing the app while selecting console text. If all features freeze,
+press Escape in that console first. If it resumes immediately, console selection
+was involved. This is a diagnostic check, not proof that all hangs have that
+cause. Direct `node index.js` launches do not apply the console setting.
+
+Relevant references: [wacli sync](https://github.com/openclaw/wacli/blob/v0.12.0/cmd/wacli/sync.go),
+[read-only auth status](https://github.com/openclaw/wacli/blob/v0.12.0/cmd/wacli/auth_status_readonly.go),
+[Windows console modes](https://learn.microsoft.com/en-us/windows/console/setconsolemode).
+
 For a deployment restart, leave OBS streaming, close and restart Node, then click
 Live for the current stream visibility. When OBS is already streaming, the app
 restores `score.txt` before OCR resumes. Starting Node or opening the control page

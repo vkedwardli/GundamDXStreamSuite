@@ -45,7 +45,6 @@ import {
   startDXOPScreen,
   connectSpeaker,
   lofiTest,
-  getRandomDelay,
   startOverlay,
   stopOverlay,
 } from "./systemUtils.js";
@@ -55,7 +54,10 @@ import {
   broadcastDummyGameState,
   markCameraAsDisabled,
   restoreScoreFromArgs,
+  stopRecognizeBattleResults,
 } from "./score.js";
+import { installShutdownHandlers } from "./shutdown.js";
+import { announceStreamLinks } from "./streamAnnouncements.js";
 import { startTimeAnnouncer } from "./timeAnnouncer.js";
 import {
   sendTextToDXGroup,
@@ -261,6 +263,7 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
   }
 
   let broadcastIds = [];
+  let announceNewStreams = false;
 
   const obsLaunched = await launchOBS(); // Ensures OBS is running and connected
   if (!obsLaunched) {
@@ -315,32 +318,7 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
           broadcastIds,
         );
 
-        try {
-          const targetGroupId = isPublic
-            ? WA_PUBLIC_GROUP_ID
-            : WA_TEST_GROUP_ID;
-          for (const id of broadcastIds) {
-            const announcement = await sendTextToDXGroup(`https://youtu.be/${id}`, {
-              withTyping: true,
-              typingDurationMs: getRandomDelay(1200, 2000), // Shorter "pasting" time
-              pauseAfterMs: getRandomDelay(800, 1200), // Quick safety pause
-              groupId: targetGroupId,
-            });
-            if (announcement) {
-              console.log(`WhatsApp stream announcement sent: https://youtu.be/${id}`);
-            } else {
-              console.error(`WhatsApp stream announcement failed: https://youtu.be/${id}`);
-            }
-            // Snappier delay between the two messages
-            if (broadcastIds.indexOf(id) === 0) {
-              await new Promise((resolve) =>
-                setTimeout(resolve, getRandomDelay(1000, 2000)),
-              );
-            }
-          }
-        } catch (err) {
-          console.error("Failed to send WhatsApp notification:", err);
-        }
+        announceNewStreams = true;
       } catch (error) {
         console.error("Error during stream creation/update:", error);
         if (broadcastIds.length > 0) await deleteLiveBroadcasts(broadcastIds); // Clean up partially created
@@ -422,6 +400,17 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
   });
   io.emit("isStreaming", { isStreaming: true, streamType: currentStreamType });
 
+  if (announceNewStreams) {
+    // Announcements are optional; WhatsApp auth/sends must not gate OCR or chat.
+    void announceStreamLinks({
+      broadcastIds: [...broadcastIds],
+      groupId: isPublic ? WA_PUBLIC_GROUP_ID : WA_TEST_GROUP_ID,
+      isCurrent: () => currentBroadcastIds.join(",") === broadcastIds.join(","),
+      isReady: () => whatsappClient.ready,
+      send: sendTextToDXGroup,
+    });
+  }
+
   await scheduler.wait(15000); // Wait for streams to be fully live before starting chat
   startLiveChatAndViewerCount({ broadcastIds, io, isPublic });
 }
@@ -499,6 +488,12 @@ schedule.scheduleJob("10 2 * * *", async () => {
   }
 });
 
+// One owner waits for both local services; OBS continues broadcasting.
+installShutdownHandlers([
+  () => stopRecognizeBattleResults(),
+  () => whatsappClient.destroy(),
+]);
+
 // --- Main Application ---
 async function main() {
   restoreScoreFromArgs(process.argv.slice(2));
@@ -510,12 +505,12 @@ async function main() {
     server.once("error", reject);
   });
 
+  startTimeAnnouncer();
   await whatsappYouTubeBridge.initialize();
   await authorizeYouTube();
   whatsappYouTubeBridge.start();
   await startDXOPScreen();
   await connectSpeaker("HK Onyx Studio", "0C:A6:94:08:F6:A1");
-  startTimeAnnouncer();
 
   // Example: For testing lofi mode directly on start (usually triggered by client)
   // lofiTest(io);

@@ -180,6 +180,8 @@ export class WacliClient extends EventEmitter {
     this._seenMessages = new Map();
     this._messageHandler = null;
     this._shutdownHandler = null;
+    this._children = new Set();
+    this._destroyPromise = null;
   }
 
   // The application installs its durable receiver synchronously at startup.
@@ -193,10 +195,10 @@ export class WacliClient extends EventEmitter {
   }
 
   async initialize() {
+    if (this._destroying) throw new Error("WhatsApp client was closed.");
     if (this.ready) return this;
     if (this._initializing) return this._initializing;
 
-    this._destroying = false;
     const initializing = this._initialize();
     this._initializing = initializing;
 
@@ -210,8 +212,20 @@ export class WacliClient extends EventEmitter {
 
   async _initialize() {
     await this._verifyBinary();
-    await this._ensureAuthenticated();
+    console.log(`WhatsApp adapter using wacli ${this.version}.`);
+    while (!this._destroying) {
+      try {
+        await this._ensureAuthenticated();
+        break;
+      } catch (error) {
+        if (this._destroying) throw error;
+        this.emit("error", error);
+        await delay(5000);
+      }
+    }
+    if (this._destroying) throw new Error("WhatsApp client was closed.");
     await this._startWebhookServer();
+    if (this._destroying) throw new Error("WhatsApp client was closed.");
 
     this._firstReady = createDeferred();
     this._syncLoopPromise = this._runSyncLoop(this._firstReady).catch((error) => {
@@ -262,7 +276,8 @@ export class WacliClient extends EventEmitter {
   }
 
   _spawn(args, options = {}) {
-    return spawn(this.binary, args, {
+    if (this._destroying) throw new Error("WhatsApp client was closed.");
+    const child = spawn(this.binary, args, {
       windowsHide: true,
       stdio: [options.inheritStdin ? "inherit" : "ignore", "pipe", "pipe"],
       env: {
@@ -271,6 +286,9 @@ export class WacliClient extends EventEmitter {
           process.env.WACLI_DEVICE_LABEL || "GundamDXStreamSuite",
       },
     });
+    this._children.add(child);
+    child.once("close", () => this._children.delete(child));
+    return child;
   }
 
   async _runCommand(
@@ -391,6 +409,10 @@ export class WacliClient extends EventEmitter {
       this._authProcess = child;
       let completed = false;
       let eventError = "";
+      const timeout = setTimeout(() => {
+        eventError = "WhatsApp login/bootstrap timed out; retrying login.";
+        child.kill("SIGTERM");
+      }, 180000);
 
       const eventLines = createLineReader((line) => {
         if (!line.trim()) return;
@@ -417,17 +439,19 @@ export class WacliClient extends EventEmitter {
       child.stdout.on("data", (chunk) => process.stdout.write(chunk));
       child.stderr.on("data", (chunk) => eventLines.push(chunk));
       child.once("error", (error) => {
+        clearTimeout(timeout);
         if (completed) return;
         completed = true;
         this._authProcess = null;
         reject(error);
       });
       child.once("close", (code) => {
+        clearTimeout(timeout);
         eventLines.end();
         this._authProcess = null;
         if (completed) return;
         completed = true;
-        if (code !== 0) {
+        if (code !== 0 || eventError) {
           reject(
             new Error(
               eventError ||
@@ -509,6 +533,10 @@ export class WacliClient extends EventEmitter {
       server.listen(0, "127.0.0.1");
     });
 
+    if (this._destroying) {
+      await new Promise(resolve => server.close(resolve));
+      throw new Error("WhatsApp client was closed.");
+    }
     const address = server.address();
     this._webhookServer = server;
     this._webhookURL = `http://127.0.0.1:${address.port}${webhookPath}`;
@@ -707,6 +735,22 @@ export class WacliClient extends EventEmitter {
       };
       const child = this._spawn(args);
       this._syncProcess = child;
+      // Older wacli versions can stay in sync --follow after remote logout
+      // without emitting a logout event or exiting. Check the local auth store
+      // read-only; only an explicit false permits a new QR login.
+      let checkingAuth = false;
+      const authMonitor = setInterval(async () => {
+        if (checkingAuth || !state.active || this._destroying) return;
+        checkingAuth = true;
+        try {
+          await this._checkSyncAuthentication(child, state);
+        } catch (error) {
+          if (!this._destroying) console.warn("WhatsApp session check failed:", error.message);
+        } finally {
+          checkingAuth = false;
+        }
+      }, 15000);
+      authMonitor.unref?.();
       let completed = false;
       let stdout = "";
 
@@ -724,6 +768,7 @@ export class WacliClient extends EventEmitter {
       });
       child.stderr.on("data", (chunk) => eventLines.push(chunk));
       child.once("error", (error) => {
+        clearInterval(authMonitor);
         if (completed) return;
         completed = true;
         state.active = false;
@@ -731,6 +776,7 @@ export class WacliClient extends EventEmitter {
         resolve({ error, connected: state.connected });
       });
       child.once("close", (code, signal) => {
+        clearInterval(authMonitor);
         eventLines.end();
         if (completed) return;
         completed = true;
@@ -747,6 +793,18 @@ export class WacliClient extends EventEmitter {
         resolve({ error, connected: state.connected });
       });
     });
+  }
+
+  async _checkSyncAuthentication(child, state) {
+    const status = await this._authStatus();
+    if (status?.authenticated !== false || !state.active || this._destroying ||
+        this._syncProcess !== child) return;
+    state.connectionGeneration += 1;
+    state.active = false;
+    this.ready = false;
+    this.emit("auth_failure", "WhatsApp session was revoked. Restarting WhatsApp login; scan the next QR code.");
+    // Release this process's store lock before the loop starts auth.
+    child.kill("SIGTERM");
   }
 
   async _runSyncLoop(firstReady) {
@@ -776,11 +834,18 @@ export class WacliClient extends EventEmitter {
         this.emit("error", result.error);
       }
 
-      const status = await this._authStatus().catch(() => null);
-      if (!status?.authenticated) {
-        const reason = "The wacli linked-device session is no longer authenticated.";
-        this.emit("auth_failure", reason);
-        await this._ensureAuthenticated();
+      try {
+        const status = await this._authStatus();
+        if (this._destroying) return;
+        if (status?.authenticated === false) {
+          const reason = "The wacli linked-device session is no longer authenticated. Scan the next QR code.";
+          this.emit("auth_failure", reason);
+          await this._ensureAuthenticated();
+        }
+      } catch (error) {
+        // A failed/expired QR attempt or a failed status read must not kill
+        // recovery permanently, or mistake a store error for remote logout.
+        if (!this._destroying) this.emit("error", error);
       }
 
       await delay(restartDelayMs);
@@ -955,29 +1020,32 @@ export class WacliClient extends EventEmitter {
     return chats.find((chat) => chat.id._serialized === chatId) ?? null;
   }
 
-  async destroy() {
-    if (this._destroying) return;
+  destroy() {
+    if (!this._destroyPromise) this._destroyPromise = this._destroy();
+    return this._destroyPromise;
+  }
+
+  async _destroy() {
     this._destroying = true;
     this.ready = false;
-    try {
-      await this._shutdownHandler?.();
-    } catch (error) {
-      console.error("Failed to finish WhatsApp message processing during shutdown:", error);
-    }
     settleDeferred(
       this._firstReady,
       "reject",
       new Error("WhatsApp client was closed before it became ready."),
     );
 
-    const children = [this._authProcess, this._syncProcess].filter(Boolean);
-    children.forEach((child) => child.kill("SIGINT"));
-    if (this._syncLoopPromise) {
-      await Promise.race([this._syncLoopPromise, delay(5000)]).catch(() => {});
+    // Include active sends/status commands as well as auth/sync. Kill owned
+    // children before draining the outbox, which may itself be waiting on one.
+    await Promise.all([...this._children].map(child => new Promise(resolve => {
+      const timeout = setTimeout(() => { child.kill("SIGKILL"); resolve(); }, 3000);
+      child.once("close", () => { clearTimeout(timeout); resolve(); });
+      child.kill("SIGTERM");
+    })));
+    try {
+      await this._shutdownHandler?.();
+    } catch (error) {
+      console.error("Failed to finish WhatsApp message processing during shutdown:", error);
     }
-    children.forEach((child) => {
-      if (child.exitCode == null && child.signalCode == null) child.kill("SIGTERM");
-    });
     await this._removeWindowsDelegateAfterShutdown();
 
     if (this._webhookServer) {
@@ -1096,31 +1164,10 @@ export async function sendTextToDXGroup(
   }
 }
 
-let isShuttingDown = false;
-
-async function shutdown(exitCode) {
-  if (isShuttingDown) return;
-  isShuttingDown = true;
-  try {
-    await client.destroy();
-  } catch (error) {
-    console.error("Failed to close WhatsApp client cleanly:", error);
-  }
-  process.exit(exitCode);
-}
-
 process.on("unhandledRejection", (reason, promise) => {
   console.error("Unhandled Rejection at:", promise, "reason:", reason);
 });
 
 process.on("uncaughtException", (error) => {
   console.error("Uncaught Exception:", error);
-});
-
-process.once("SIGINT", () => {
-  shutdown(130);
-});
-
-process.once("SIGTERM", () => {
-  shutdown(143);
 });

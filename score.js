@@ -867,15 +867,6 @@ async function startRecognizeBattleResults(onIdleShutdown, isPublic) {
   };
 
   intervalId = setTimeout(runRecognitionCycle, 0);
-
-  const gracefulShutdown = async () => {
-    console.log("\nReceived shutdown signal (Ctrl+C).");
-    await stopRecognizeBattleResults();
-    process.exit(0);
-  };
-
-  process.on("SIGINT", gracefulShutdown);
-  process.on("SIGTERM", gracefulShutdown);
 }
 
 async function stopRecognizeBattleResults() {

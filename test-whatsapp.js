@@ -91,6 +91,9 @@ timeoutCheck = setTimeout(() => {
 process.on("SIGINT", () => {
   shutdown(130);
 });
+process.on("SIGTERM", () => {
+  shutdown(143);
+});
 
 try {
   if (!WA_TEST_GROUP_ID?.endsWith("@g.us")) {

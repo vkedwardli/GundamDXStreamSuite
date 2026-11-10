@@ -3,6 +3,8 @@ import { createHmac } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { once } from "node:events";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -479,4 +481,89 @@ test("send readiness timeout includes the initial connection wait", async (t) =>
   t.mock.timers.tick(1000);
   await rejected;
   assert.equal(client.listenerCount("ready"), 0);
+});
+
+test("remote logout stops the owned sync even when it never exits itself", async () => {
+  const client = testClient();
+  const state = { active: true, connectionGeneration: 1 };
+  const signals = [];
+  const child = { kill: signal => signals.push(signal) };
+  client._syncProcess = child;
+  client.ready = true;
+  client._authStatus = async () => ({ authenticated: false });
+  const failures = [];
+  client.on("auth_failure", message => failures.push(message));
+  await client._checkSyncAuthentication(child, state);
+  assert.equal(client.ready, false);
+  assert.equal(state.active, false);
+  assert.equal(state.connectionGeneration, 2);
+  assert.deepEqual(signals, ["SIGTERM"]);
+  assert.match(failures[0], /QR code/);
+});
+
+test("auth check errors and results from an old sync do not revoke a healthy session", async () => {
+  const client = testClient();
+  const child = { kill: () => assert.fail("must not kill healthy sync") };
+  client._syncProcess = child;
+  client.ready = true;
+  client._authStatus = async () => { throw new Error("store temporarily unavailable"); };
+  await assert.rejects(client._checkSyncAuthentication(child, { active: true }), /unavailable/);
+  client._authStatus = async () => ({ authenticated: false });
+  await client._checkSyncAuthentication({}, { active: true });
+  assert.equal(client.ready, true);
+});
+
+test("failed QR recovery retries while unrelated event-loop work continues", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const client = testClient();
+  client.on("error", () => {});
+  client._authStatus = async () => ({ authenticated: false });
+  let authAttempts = 0;
+  client._ensureAuthenticated = async () => {
+    if (++authAttempts === 1) throw new Error("QR expired");
+    client._destroying = true;
+  };
+  client._runSyncProcess = async () => ({ error: null, connected: false });
+  const syncing = client._runSyncLoop({ settled: false });
+  await new Promise(setImmediate);
+  assert.equal(authAttempts, 1);
+  let heartbeat = false;
+  setTimeout(() => { heartbeat = true; }, 500);
+  t.mock.timers.tick(1000);
+  await new Promise(setImmediate);
+  assert.equal(heartbeat, true);
+  assert.equal(authAttempts, 2);
+  t.mock.timers.tick(2000);
+  await syncing;
+});
+
+test("sync monitor detects logout and ends without leaving its timer behind", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const client = testClient();
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.kill = signal => { child.emit("close", null, signal); };
+  client._spawn = () => child;
+  let checks = 0;
+  client._authStatus = async () => { checks++; return { authenticated: false }; };
+  const syncing = client._runSyncProcess({ settled: false });
+  t.mock.timers.tick(15000);
+  await syncing;
+  t.mock.timers.tick(15000);
+  assert.equal(checks, 1);
+  assert.equal(client._syncProcess, null);
+});
+
+test("destroy kills owned sends before waiting for the outbox and is shared by callers", async () => {
+  const client = testClient();
+  const child = new EventEmitter();
+  let killed = false;
+  child.kill = () => { killed = true; child.emit("close"); };
+  client._children.add(child);
+  client.setShutdownHandler(async () => { assert.equal(killed, true); });
+  const first = client.destroy();
+  assert.equal(client.destroy(), first);
+  await first;
+  await assert.rejects(client.initialize(), /closed/);
 });
