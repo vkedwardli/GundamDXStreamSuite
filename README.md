@@ -137,19 +137,43 @@ stream visibility or whether a stream has started. It uses the supplied HKO
 formatter: temperature versus yesterday, current Observatory temperature, today's
 forecast when available, active warnings, and high visibility at Central (falling
 back to Sai Wan Ho). Unavailable optional readings are omitted.
+HKO's nine-day feed can start at tomorrow after its late-morning update. The
+formatter therefore also fetches the local forecast (`flw`) for today's latest
+description, and saves any matching same-day nine-day entry under
+`weather-announcements/forecasts/YYYYMMDD.json`. Noon can reuse that entry for
+the temperature range and significant-rain probability, labelled `早前預報`.
+If no same-day entry was saved (for example, the first startup is after the feed
+has rolled over), those fields say `暫未有資料`; tomorrow's forecast is never
+shown as today's. The local description is used only for a fresh, same-day
+bulletin covering today, including `下午及今晚` after the noon update.
+Immediately below the current temperature, `體感溫度約 …°C` shows the
+[NWS heat index](https://www.wpc.ncep.noaa.gov/html/heatindex_equation.shtml),
+calculated from fresh Observatory temperature and relative humidity and rounded
+to one decimal place. It uses the simple estimate averaged with temperature
+below 80°F, and the Rothfusz regression plus humidity adjustments otherwise.
+This estimates shaded heat conditions, not wind chill or direct sunlight; the
+line is omitted when either input is unavailable, stale, or invalid.
 Overnight restarts (00:00–05:59), including the previous operation day's 1am
-session, are skipped entirely and do not queue an announcement for 6am.
+session, skip the morning edition and do not queue an announcement for 6am.
+
+The app also schedules a **12:00 noon Hong Kong time** announcement every day
+while Node is running, headed `香港中午天氣`. This is independent of morning
+startup and stream visibility. If WhatsApp or HKO is unavailable, the noon
+edition can recover until 13:00; a restart during that hour catches up if it
+hasn't already been attempted. Later starts wait for the next day's noon run.
 
 Weather work runs in the background. Logs prefixed `WhatsApp morning weather
-YYYYMMDD:` report waiting, fetching, sending, sent (with message ID), skipped, or
-failure. HKO fetch failures retry every five minutes until noon. If WhatsApp
-isn't ready before noon, the announcement is skipped; a continuously running
-process does not schedule another announcement the next day.
+YYYYMMDD:` or `WhatsApp noon weather YYYYMMDD:` report waiting, fetching, sending,
+sent (with message ID), skipped, or failure. HKO fetch failures retry every five
+minutes within the edition's window. The morning edition expires at noon, and
+the noon edition expires at 13:00. Shutdown cancels the daily job and pending
+weather work.
 
 Daily send records live in `weather-announcements/` within the configured wacli
 session directory and survive Node restarts. Keep this folder during deployment.
-A send attempt is recorded before dispatch; failed or uncertain sends are logged
-and not automatically repeated that day, avoiding duplicate public messages after
+Morning uses `YYYYMMDD.json`; noon uses `YYYYMMDD-noon.json`, allowing both editions
+on the same day. A send attempt is recorded before dispatch; failed or uncertain
+sends are logged and that edition is not automatically repeated that day, avoiding duplicate public messages after
 a crash or lost acknowledgement. A returned message ID confirms WhatsApp accepted
 the send, not that every group member received or read it. This announcement
 checks outbound WhatsApp delivery; it does not verify the incoming YouTube bridge.

@@ -1,5 +1,6 @@
 import { mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import schedule from "node-schedule";
 import { buildWeatherMessage, hkParts } from "./hkoWeather.js";
 
 const dateKey = date => {
@@ -11,15 +12,17 @@ const isMorning = date => {
   return hour >= 6 && hour < 12;
 };
 
-// Startup-only: no next-day scheduling. All work runs independently of streaming.
-export function startMorningWeather({ client, groupId, directory,
+// One delivery window, with durable deduplication and bounded background retries.
+function startWeatherAnnouncement({ client, groupId, directory,
   startedAt = new Date(Date.now() - process.uptime() * 1000), now = () => new Date(),
-  buildMessage = buildWeatherMessage, logger = console, pollMs = 30000 }) {
+  buildMessage = buildWeatherMessage, logger = console, pollMs = 30000, edition = "morning" }) {
+  const inWindow = edition === "noon" ? date => Number(hkParts(date).hour) === 12 : isMorning;
+  const windowLabel = edition === "noon" ? "12:00–before 13:00" : "06:00–before 12:00";
   const day = dateKey(startedAt);
-  const prefix = `WhatsApp morning weather ${day}:`;
+  const prefix = `WhatsApp ${edition} weather ${day}:`;
   const log = message => logger.log(`${prefix} ${message}`);
-  if (!isMorning(startedAt)) {
-    log("skipped; Node started outside 06:00–before 12:00 Hong Kong time.");
+  if (!inWindow(startedAt)) {
+    log(`skipped; Node started outside ${windowLabel} Hong Kong time.`);
     return () => {};
   }
   if (!groupId?.endsWith("@g.us")) {
@@ -27,7 +30,7 @@ export function startMorningWeather({ client, groupId, directory,
     return () => {};
   }
 
-  const file = path.join(directory, `${day}.json`);
+  const file = path.join(directory, `${day}${edition === "noon" ? "-noon" : ""}.json`);
   let stopped = false;
   let busy = false;
   let waitingLogged = false;
@@ -40,12 +43,12 @@ export function startMorningWeather({ client, groupId, directory,
   };
   const eligible = () => {
     const current = now();
-    return !stopped && dateKey(current) === day && isMorning(current);
+    return !stopped && dateKey(current) === day && inWindow(current);
   };
 
   async function run() {
     if (!eligible()) {
-      log("skipped; morning send window has ended.");
+      log(`skipped; ${edition} send window has ended.`);
       stop();
       return;
     }
@@ -66,10 +69,11 @@ export function startMorningWeather({ client, groupId, directory,
     log("fetching HKO weather.");
     let text;
     try {
-      text = await buildMessage({ now: now(), logger });
+      text = await buildMessage({ now: now(), logger, edition,
+        forecastCacheDirectory: path.join(directory, 'forecasts') });
     } catch (error) {
       nextFetchAt = now().getTime() + 5 * 60000;
-      logger.error(`${prefix} HKO fetch failed; retrying in five minutes while before noon:`, error.message);
+      logger.error(`${prefix} HKO fetch failed; retrying in five minutes within ${windowLabel} Hong Kong time:`, error.message);
       return;
     }
     if (!eligible() || !client.ready) return;
@@ -85,13 +89,13 @@ export function startMorningWeather({ client, groupId, directory,
       stop();
       return;
     }
-    const record = { day, groupId, status: "sending", attemptedAt: now().toISOString() };
+    const record = { day, edition, groupId, status: "sending", attemptedAt: now().toISOString() };
     try { await handle.writeFile(JSON.stringify(record) + "\n"); await handle.sync(); }
     finally { await handle.close(); }
     if (!eligible() || !client.ready) {
       record.status = "skipped";
       await writeFile(file, JSON.stringify(record) + "\n", { flush: true });
-      log("skipped; shutdown, noon, or disconnection occurred before dispatch.");
+      log("skipped; shutdown, window expiry, or disconnection occurred before dispatch.");
       stop();
       return;
     }
@@ -125,4 +129,31 @@ export function startMorningWeather({ client, groupId, directory,
   timer.unref?.();
   tick();
   return stop;
+}
+
+// Keep the original morning startup behavior and its existing record filenames.
+export function startMorningWeather(options) {
+  return startWeatherAnnouncement({ ...options, edition: "morning" });
+}
+
+export function startWeatherAnnouncements(options, scheduleJob = schedule.scheduleJob) {
+  const now = options.now ?? (() => new Date());
+  const stopMorning = startMorningWeather(options);
+  let stopNoon = () => {};
+  let stopped = false;
+  const announceNoon = () => {
+    if (stopped) return;
+    stopNoon();
+    stopNoon = startWeatherAnnouncement({ ...options, edition: "noon", startedAt: now() });
+  };
+  const job = scheduleJob({ rule: "0 12 * * *", tz: "Asia/Hong_Kong" }, announceNoon);
+  // Recover a missed noon run after a restart, only within the noon window.
+  if (Number(hkParts(now()).hour) === 12) announceNoon();
+  (options.logger ?? console).log("WhatsApp noon weather scheduled daily for 12:00 Hong Kong time.");
+  return () => {
+    stopped = true;
+    job?.cancel();
+    stopMorning();
+    stopNoon();
+  };
 }
