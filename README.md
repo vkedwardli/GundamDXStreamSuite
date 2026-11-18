@@ -108,6 +108,13 @@ node index.js
 
 Once running, open the control panel in your browser to manage the stream.
 
+Restarting the YouTube chat readers can refresh the chat HTML with recent
+history. Each comment can trigger WhatsApp forwarding and TTS only once per
+broadcast during the Node session, including across chat stop/start. After a
+Node restart, comments timestamped before startup remain display-only. Replayed
+comments still confirm WhatsApp-to-YouTube delivery, but do not queue speech or
+leave captions waiting for audio.
+
 On the touch panel (`control.html`), double-tap the Gundam icon to show the
 Wi-Fi QR code. Scan it to join the hidden **LCKDX** network, or connect manually
 using WPA/WPA2 and password **clsclscls**. The dialog hides automatically after

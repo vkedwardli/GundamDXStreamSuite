@@ -16,7 +16,11 @@ let fedLiveChat = null;
 let zeonLiveChat = null;
 let liveChatInterval = null;
 let viewerCountInterval = null;
-const messageCache = new Map();
+let chatGeneration = 0;
+// Keep these for the Node session, including chat stop/start. Expiring them
+// would let a reader's history replay trigger WhatsApp and speech again.
+// After a Node restart, the original YouTube timestamp blocks older effects.
+const handledSideEffects = new Set();
 
 let currentMegaphoneState = Megaphone.ENABLED; // Internal state for chatService
 let isPublicStream = true;
@@ -52,9 +56,11 @@ function normalizeYouTubeTimestamp(timestamp) {
   return new Date(timestamp);
 }
 
-function processChatMessage(chatItem, faction, io) {
-  // Report exact IDs even for replayed comments, before the overlay's cutoff.
+function processChatMessage(chatItem, { broadcastId, faction, io, displayedMessages }) {
+  // Delivery confirmation must still see IDs from replayed history.
   internalEvents.emit("youtubeChatMessageObserved", chatItem.id);
+  const timestamp = normalizeYouTubeTimestamp(chatItem.timestamp);
+  const messageTime = timestamp.getTime();
   const msg = createMessage({
     isFederation: faction === Faction.FEDERATION,
     authorName: chatItem.author.name,
@@ -76,42 +82,27 @@ function processChatMessage(chatItem, faction, io) {
             (item.alt.startsWith(":") ? item.alt : `:${item.alt}:`),
       )
       .join(""),
-    timestamp: normalizeYouTubeTimestamp(chatItem.timestamp),
+    timestamp: Number.isFinite(messageTime) ? timestamp : undefined,
   });
 
-  // youtube-chat replays recent messages when it reconnects to an existing
-  // broadcast. Drop messages from the previous Node.js session before they
-  // reach the log, OBS overlay, TTS, or WhatsApp forwarding.
-  const messageTime = msg.timestamp?.getTime();
-  if (Number.isFinite(messageTime) && messageTime < serviceStartTime) {
-    return;
-  }
+  const messageKey = JSON.stringify([
+    broadcastId,
+    chatItem.id || [msg.authorName, msg.plainMessage, messageTime],
+  ]);
+  // A new reader can refresh the HTML with history. Repeated polling within
+  // that reader should not append the same comment over and over.
+  if (displayedMessages.has(messageKey)) return;
+  displayedMessages.add(messageKey);
+
+  const shouldTriggerSideEffects =
+    Number.isFinite(messageTime) &&
+    messageTime >= serviceStartTime &&
+    !handledSideEffects.has(messageKey);
+  // Reserve before dispatching asynchronous work; a replay must not retry a
+  // send whose outcome is unknown or speak a previously muted comment.
+  if (shouldTriggerSideEffects) handledSideEffects.add(messageKey);
 
   io.emit("chatlog", `${msg.authorName}: ${msg.plainMessage}`);
-
-  const currentTime = Date.now();
-  // Composite key: Author + Message + Original YouTube Timestamp
-  // This uniquely identifies this specific message instance from the API.
-  const messageKey = `${msg.authorName}:${msg.plainMessage}:${
-    msg.timestamp ? msg.timestamp.getTime() : ""
-  }`;
-
-  if (messageCache.has(messageKey)) {
-    // Refresh the cache timer: as long as the API repeats this specific message,
-    // it stays in the cache and remains blocked.
-    messageCache.set(messageKey, currentTime);
-    return; // Skip duplicate
-  }
-
-  // Cleanup old entries (older than 5 minutes)
-  for (const [key, timestamp] of messageCache) {
-    if (currentTime - timestamp > 300000) {
-      messageCache.delete(key);
-    }
-  }
-
-  // Set the initial cache entry
-  messageCache.set(messageKey, currentTime);
 
   // Handle WhatsApp forwarded messages pattern: "💬Name: Message" or "💬Name 開咪"
   // Move this BEFORE TTS logic so it doesn't get confused by megaphone icons
@@ -221,10 +212,13 @@ function processChatMessage(chatItem, faction, io) {
   }
 
   // NOW we emit the final version with the icon to the chat box
-  msg.tts = Boolean(ttsText && currentMegaphoneState.enabled);
+  msg.tts = Boolean(shouldTriggerSideEffects && ttsText && currentMegaphoneState.enabled);
   io.emit("message", msg);
 
-  if (ttsText && currentMegaphoneState.enabled) {
+  // Replayed history is display-only, with no pending speech for captions.
+  if (!shouldTriggerSideEffects) return;
+
+  if (msg.tts) {
     textToSpeech({
       text: ttsText,
       model: ttsModel,
@@ -246,6 +240,7 @@ function processChatMessage(chatItem, faction, io) {
 export function setupLiveChatForFaction({ broadcastId, faction, io }) {
   return new Promise((resolve, reject) => {
     const liveChat = new LiveChat({ liveId: broadcastId });
+    const displayedMessages = new Set();
 
     if (faction === Faction.FEDERATION) {
       if (fedLiveChat) fedLiveChat.stop();
@@ -256,6 +251,12 @@ export function setupLiveChatForFaction({ broadcastId, faction, io }) {
     }
 
     liveChat.on("start", (liveId) => {
+      const currentReader = faction === Faction.FEDERATION ? fedLiveChat : zeonLiveChat;
+      if (currentReader !== liveChat) {
+        liveChat.stop(); // A connection attempt finished after stop/replacement.
+        resolve(liveChat);
+        return;
+      }
       console.log(`Live chat started for ${faction.value}: ${liveId}`);
       resolve(liveChat); // Resolve the promise on successful start
     });
@@ -265,7 +266,10 @@ export function setupLiveChatForFaction({ broadcastId, faction, io }) {
     });
 
     liveChat.on("chat", (chatItem) => {
-      processChatMessage(chatItem, faction, io);
+      // stop() cancels polling, but an already-running request can finish later.
+      const currentReader = faction === Faction.FEDERATION ? fedLiveChat : zeonLiveChat;
+      if (currentReader !== liveChat) return;
+      processChatMessage(chatItem, { broadcastId, faction, io, displayedMessages });
     });
 
     liveChat.on("error", (err) => {
@@ -280,12 +284,13 @@ export function setupLiveChatForFaction({ broadcastId, faction, io }) {
   });
 }
 
-async function fetchAndSumViewers({ broadcastIds, io }) {
+async function fetchAndSumViewers({ broadcastIds, io, generation }) {
   try {
     const viewerCounts = await Promise.all(
       broadcastIds.map((videoId) => getViewerCount(videoId)),
     );
     const totalViewers = viewerCounts.reduce((sum, count) => sum + count, 0);
+    if (generation !== chatGeneration) return;
     console.log(`Total Viewers: ${totalViewers}`);
     io.emit("totalviewers", totalViewers);
   } catch (error) {
@@ -298,6 +303,7 @@ export async function startLiveChatAndViewerCount({
   io,
   isPublic = true,
 }) {
+  const generation = ++chatGeneration;
   isPublicStream = isPublic;
   if (broadcastIds.length !== 2) {
     console.error(
@@ -309,7 +315,7 @@ export async function startLiveChatAndViewerCount({
   let attempts = 0;
   const maxAttempts = 3;
 
-  while (attempts < maxAttempts) {
+  while (attempts < maxAttempts && generation === chatGeneration) {
     try {
       console.log(
         `Attempt ${attempts + 1} to set up live chat for Federation and Zeon...`,
@@ -328,18 +334,20 @@ export async function startLiveChatAndViewerCount({
       });
 
       await Promise.all([fedPromise, zeonPromise]);
+      if (generation !== chatGeneration) return;
 
       console.log("Setting up live viewer count...");
-      fetchAndSumViewers({ broadcastIds, io }); // Initial fetch
+      fetchAndSumViewers({ broadcastIds, io, generation }); // Initial fetch
       if (viewerCountInterval) clearInterval(viewerCountInterval);
       viewerCountInterval = setInterval(
-        () => fetchAndSumViewers({ broadcastIds, io }),
+        () => fetchAndSumViewers({ broadcastIds, io, generation }),
         25 * 1000, // every 25 seconds
       );
 
       console.log("Successfully started live chat and viewer count.");
       return; // Exit the loop and function on success
     } catch (error) {
+      if (generation !== chatGeneration) return;
       console.error(`Attempt ${attempts + 1} failed:`, error.message || error);
       attempts++;
       if (attempts < maxAttempts) {
@@ -353,6 +361,7 @@ export async function startLiveChatAndViewerCount({
 }
 
 export function stopLiveChatAndViewerCount() {
+  chatGeneration++; // Cancel pending setup/retries and ignore late viewer responses.
   console.log("Stopping live chat for Federation and Zeon...");
   if (fedLiveChat) {
     fedLiveChat.stop();
@@ -372,6 +381,5 @@ export function stopLiveChatAndViewerCount() {
     viewerCountInterval = null;
     console.log("Viewer count interval stopped.");
   }
-  messageCache.clear();
   console.log("Live chat and viewer count services stopped.");
 }
