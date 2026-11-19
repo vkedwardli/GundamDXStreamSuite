@@ -10,61 +10,107 @@ import {
   prepareScoresForStream,
 } from "./score.js";
 import { io } from "./serverSetup.js";
+import { withTimeout } from "./shutdown.js";
 
 export const obs = new OBSWebSocket();
+const OBS_REQUEST_TIMEOUT_MS = 5000;
+const OBS_PROCESS_EXIT_TIMEOUT_MS = 15000;
+const OBS_PROCESS_EXIT_POLL_MS = 500;
+let connecting = null;
 
 export async function obsConnect(callback) {
+  if (!obs.identified && !connecting) {
+    // Concurrent camera/status/stop requests must share a connection attempt.
+    // obs.connect() disconnects any existing socket before opening a new one.
+    connecting = (async () => {
+      try {
+        await withTimeout(() => obs.connect("ws://localhost:4455", OBS_PASSWORD),
+          OBS_REQUEST_TIMEOUT_MS, "OBS connection");
+        console.log("Connected to OBS WebSocket");
+        return true;
+      } catch (error) {
+        console.error("OBS Connection Error:", error.message || error);
+        // Also cancel a handshake that has not completed by the deadline.
+        await withTimeout(() => obs.disconnect(), OBS_REQUEST_TIMEOUT_MS,
+          "OBS connection cleanup").catch(() => {});
+        return false;
+      }
+    })().finally(() => { connecting = null; });
+  }
+  const connected = connecting ? await connecting : obs.identified;
+  if (callback) await callback(connected);
+  return connected;
+}
+
+// null means unknown, including a lost control connection. It must never be
+// used as evidence that OBS has stopped broadcasting.
+export async function getOBSStreamingState({ reconnect = false } = {}) {
   try {
-    if (obs.identified) {
-      console.log("Already connected to OBS WebSocket.");
-      if (callback) callback(true);
-      return;
-    }
-    await obs.connect("ws://localhost:4455", OBS_PASSWORD);
-    console.log("Connected to OBS WebSocket");
-    if (callback) callback(true);
+    if (!obs.identified && reconnect) await obsConnect();
+    if (!obs.identified) return null;
+    const status = await withTimeout(() => obs.call("GetStreamStatus"),
+      OBS_REQUEST_TIMEOUT_MS, "OBS stream status");
+    return typeof status.outputActive === "boolean" ? status.outputActive : null;
   } catch (error) {
-    console.error("OBS Connection Error:", error.message || error);
-    if (callback) callback(false);
+    console.error("Could not determine OBS streaming state:", error.message);
+    return null;
   }
 }
 
 export async function IsLiveStreaming() {
-  try {
-    if (!obs.identified) {
-      // console.log("OBS not connected, attempting to connect for status check.");
-      // await obsConnect(); // Try to connect if not already
-      // if (!obs.identified) return false; // Still not connected
-      return false; // If not connected, assume not streaming
-    }
-    let streamStatus = await obs.call("GetStreamStatus");
-    return streamStatus.outputActive;
-  } catch (error) {
-    // console.error("Error getting OBS stream status:", error.message);
-    return false; // Assume not streaming on error
-  }
+  return (await getOBSStreamingState()) === true;
 }
 
-export async function startOBSStreamingAndRecognition(onIdleShutdown, isPublic) {
+export async function startOBSStreamingAndRecognition(onIdleShutdown, isPublic, isCurrent = () => true,
+  { recovery = false } = {}) {
   try {
     const isResuming = await IsLiveStreaming();
+    if (!isCurrent()) return false;
     if (!isResuming) {
-      await obs.call("StartStream");
+      await withTimeout(() => obs.call("StartStream"), OBS_REQUEST_TIMEOUT_MS, "OBS StartStream");
+      if (!isCurrent()) return false;
       console.log("OBS streaming started");
-      await obs.call("StartVirtualCam");
-      console.log("OBS Virtual Camera started");
     } else {
       console.log("OBS is streaming already, re-initiating recognition...");
     }
-    // Restore saved scores only when rejoining OBS's ongoing stream.
-    prepareScoresForStream(isResuming);
+    if (recovery) {
+      const camera = await withTimeout(() => obs.call("GetVirtualCamStatus"),
+        OBS_REQUEST_TIMEOUT_MS, "OBS virtual camera status");
+      if (!isCurrent()) return false;
+      if (!camera.outputActive) await withTimeout(() => obs.call("StartVirtualCam"),
+        OBS_REQUEST_TIMEOUT_MS, "OBS StartVirtualCam");
+    } else if (!isResuming) {
+      await withTimeout(() => obs.call("StartVirtualCam"), OBS_REQUEST_TIMEOUT_MS, "OBS StartVirtualCam");
+      console.log("OBS Virtual Camera started");
+    }
+    if (!isCurrent()) return false;
+    if (recovery) {
+      let active = false;
+      for (let attempt = 0; attempt < 10 && isCurrent(); attempt++) {
+        const stream = await getOBSStreamingState();
+        const camera = await withTimeout(() => obs.call("GetVirtualCamStatus"),
+          OBS_REQUEST_TIMEOUT_MS, "OBS virtual camera status");
+        if (stream === true && camera.outputActive === true) { active = true; break; }
+        await scheduler.wait(500);
+      }
+      if (!isCurrent()) return false;
+      if (!active) throw new Error("OBS stream and virtual camera did not both become active.");
+    }
+    // Recovery belongs to the same broadcast even though its encoder stopped.
+    prepareScoresForStream(isResuming || recovery);
     // Always start recognition; it's a local process needed for both new and resumed streams.
     await startRecognizeBattleResults(onIdleShutdown, isPublic);
+    // Worker creation can finish after a concurrent stop has already cleaned up.
+    if (!isCurrent()) {
+      await stopRecognizeBattleResults();
+      return false;
+    }
+    return true;
   } catch (error) {
     console.error("Error starting OBS stream/recognition:", error);
     // Potentially try to stop virtual cam if stream start failed but cam started
     try {
-      await obs.call("StopVirtualCam");
+      await withTimeout(() => obs.call("StopVirtualCam"), OBS_REQUEST_TIMEOUT_MS, "OBS StopVirtualCam");
       console.log("Cleaned up OBS Virtual Camera after start error.");
     } catch (cleanupError) {
       // console.error("Error cleaning up virtual cam:", cleanupError);
@@ -72,25 +118,51 @@ export async function startOBSStreamingAndRecognition(onIdleShutdown, isPublic) 
     await stopRecognizeBattleResults().catch((e) =>
       console.error("Error stopping recognition after start error:", e),
     );
+    return false;
   }
 }
 
 export async function stopOBSStreamingAndRecognition() {
+  const result = { streamStopped: false, recognitionStopped: false };
+  // Local cleanup starts immediately and is independent of OBS requests.
+  const recognition = withTimeout(() => stopRecognizeBattleResults(), 10000,
+    "Battle recognition shutdown").then(() => {
+      result.recognitionStopped = true;
+    }).catch(error => console.error("Error stopping battle recognition:", error.message));
+
   try {
-    if (await IsLiveStreaming()) {
-      // Check if actually streaming before trying to stop
-      await obs.call("StopStream");
-      console.log("OBS streaming stopped");
+    const state = await getOBSStreamingState({ reconnect: true });
+    if (state === false) {
+      result.streamStopped = true;
+      console.log("OBS is already stopped; completing local cleanup.");
+    } else if (obs.identified) {
+      // Even if the status query failed, an explicit Stop still requests stop.
+      await withTimeout(() => obs.call("StopStream"), OBS_REQUEST_TIMEOUT_MS, "OBS StopStream");
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const stoppedState = await getOBSStreamingState();
+        result.streamStopped = stoppedState === false;
+        if (result.streamStopped || stoppedState === null) break;
+        if (attempt < 9) await scheduler.wait(250);
+      }
+      if (result.streamStopped) console.log("OBS streaming stopped");
     } else {
-      console.log("OBS was not streaming.");
+      console.error("OBS control connection unavailable; stream shutdown is not confirmed.");
     }
-    // Always try to stop these, even if streaming wasn't active, as they might have been started independently or due to partial success
-    await stopRecognizeBattleResults();
-    await obs.call("StopVirtualCam");
-    console.log("OBS Virtual Camera stopped");
   } catch (error) {
-    console.error("Error stopping OBS stream/recognition:", error);
+    console.error("Error stopping OBS stream:", error.message);
   }
+
+  // Failure of either stop operation must not prevent the other cleanups.
+  if (obs.identified) {
+    try {
+      await withTimeout(() => obs.call("StopVirtualCam"), OBS_REQUEST_TIMEOUT_MS, "OBS StopVirtualCam");
+      console.log("OBS Virtual Camera stopped");
+    } catch (error) {
+      console.error("Error stopping OBS Virtual Camera:", error.message);
+    }
+  }
+  await recognition;
+  return result;
 }
 
 export async function launchOBS() {
@@ -164,56 +236,65 @@ export async function launchOBS() {
 }
 
 export async function closeOBS() {
+  // A failed WebSocket disconnect must not skip closing the local OBS process.
   try {
-    if (obs.identified) {
-      // Only disconnect if connected
-      await obs.disconnect();
-      console.log("Disconnected from OBS WebSocket.");
-    } else {
-      console.log("OBS WebSocket was not connected, no need to disconnect.");
-    }
-    await scheduler.wait(3000); // Give a moment for OBS to process disconnect
+    await withTimeout(() => obs.disconnect(), OBS_REQUEST_TIMEOUT_MS, "OBS disconnect");
+  } catch (error) {
+    console.error("Error disconnecting OBS:", error.message);
+  }
 
-    // Attempt to terminate OBS process
-    if (os.platform() === "win32") {
-      exec("taskkill /im obs64.exe", (error, stdout, stderr) => {
-        // Added /f to force close
-        if (error && !error.message.includes("not found")) {
-          // Ignore "process not found"
-          console.error(`Error terminating OBS: ${error.message}`);
-          return;
-        }
-        if (stderr && !stderr.includes("not found")) {
-          // Ignore "process not found"
-          console.error(`stderr while terminating OBS: ${stderr}`);
-          return;
-        }
-        console.log("Attempted to terminate OBS process.");
-      });
-    } else if (os.platform() === "darwin") {
-      exec("killall OBS", (error, stdout, stderr) => {
-        if (error) {
-          // killall returns non-zero if no process matched
-          if (!error.message.includes("No matching processes")) {
-            console.error(`Error terminating OBS (killall): ${error.message}`);
-          }
-        } else {
-          console.log("Attempted to terminate OBS process (killall).");
-        }
-      });
-    } else {
-      exec("pkill obs", (error, stdout, stderr) => {
-        if (error && error.code !== 1) {
-          // code 1 means no process found usually
-          console.error(`Error terminating OBS (pkill): ${error.message}`);
-        } else {
-          console.log("Attempted to terminate OBS process (pkill).");
-        }
-      });
+  const platform = os.platform();
+  const inspectCommand = platform === "win32"
+    ? 'tasklist /fi "IMAGENAME eq obs64.exe" /fo csv /nh'
+    : platform === "darwin" ? "pgrep -x OBS" : "pgrep -x obs";
+  const closeCommand = platform === "win32" ? "taskkill /im obs64.exe"
+    : platform === "darwin" ? "killall OBS" : "pkill -x obs";
+  const run = (command, timeout = 10000) => new Promise(resolve => {
+    exec(command, { timeout }, (error, stdout, stderr) => resolve({ error, stdout, stderr }));
+  });
+  let lastProcessIds = [];
+  const isRunning = async (timeout) => {
+    const { error, stdout } = await run(inspectCommand, timeout);
+    if (platform !== "win32" && error?.code === 1) return false;
+    if (error) throw error;
+    lastProcessIds = platform === "win32"
+      ? [...stdout.matchAll(/^\s*"obs64\.exe","(\d+)"/gim)].map(match => match[1])
+      : stdout.trim().split(/\s+/).filter(Boolean);
+    return platform === "win32" ? /^\s*"obs64\.exe",/im.test(stdout) : Boolean(stdout.trim());
+  };
+
+  try {
+    if (!(await isRunning())) return true;
+  } catch (error) {
+    console.error("Could not inspect OBS process before closing:", error.message);
+  }
+
+  const { error } = await run(closeCommand);
+  if (error) console.error("Error terminating OBS:", error.message);
+  // The OBS window/browser sources can disappear before driver and plugin
+  // teardown releases the process. Poll until exit, rather than failing after
+  // the old three checks (only two seconds), and proceed as soon as it exits.
+  const exitCheckStarted = Date.now();
+  const exitDeadline = exitCheckStarted + OBS_PROCESS_EXIT_TIMEOUT_MS;
+  let waitingLogged = false;
+  try {
+    while (Date.now() < exitDeadline) {
+      if (!(await isRunning(Math.max(1, Math.min(10000, exitDeadline - Date.now()))))) {
+        console.log(`OBS process has exited (verified after ${((Date.now() - exitCheckStarted) / 1000).toFixed(1)}s).`);
+        return true;
+      }
+      if (!waitingLogged) {
+        console.log(`Waiting up to ${OBS_PROCESS_EXIT_TIMEOUT_MS / 1000}s for OBS process cleanup (PID(s): ${lastProcessIds.join(", ") || "unknown"})...`);
+        waitingLogged = true;
+      }
+      const remaining = exitDeadline - Date.now();
+      if (remaining > 0) await scheduler.wait(Math.min(OBS_PROCESS_EXIT_POLL_MS, remaining));
     }
   } catch (error) {
-    console.error("Error closing OBS:", error);
+    console.error("Could not verify OBS process exit:", error.message);
   }
+  console.error(`OBS process exit was not confirmed after ${((Date.now() - exitCheckStarted) / 1000).toFixed(1)}s (last seen PID(s): ${lastProcessIds.join(", ") || "unknown"}). Retry Stop or close OBS manually.`);
+  return false;
 }
 
 export async function hideZDXPopup() {

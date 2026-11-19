@@ -1,3 +1,17 @@
+export async function withTimeout(operation, timeoutMs, description) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(operation),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${description} timed out after ${timeoutMs / 1000}s.`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function installShutdownHandlers(cleanups, { target = process, exit = code => process.exit(code), timeoutMs = 10000, logger = console } = {}) {
   let stopping;
   const shutdown = code => {

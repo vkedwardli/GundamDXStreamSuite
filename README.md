@@ -115,6 +115,28 @@ Node restart, comments timestamped before startup remain display-only. Replayed
 comments still confirm WhatsApp-to-YouTube delivery, but do not queue speech or
 leave captions waiting for audio.
 
+Stop always attempts local chat, viewer polling, OCR, and overlay cleanup, even
+when the OBS control connection is lost or OBS is already stopped. It retries
+the connection, requests stream shutdown when possible, and waits for the OBS
+process-close command and exit check. A failed step does not skip the other
+cleanup steps. After the close command, it allows up to 15 seconds for process
+cleanup, polling every 500ms and proceeding as soon as exit is confirmed. The
+window disappearing alone does not confirm process exit; pending process IDs
+and elapsed wait time are logged. If shutdown cannot be confirmed, the control
+panel keeps Stop available for retry and blocks Start until cleanup succeeds. Delayed startup
+and chat retry work cannot resume polling after Stop.
+
+While streaming, open **停播** and choose **重開直播** to recover capture hardware:
+stop the OBS stream and virtual camera, close OBS, relaunch it, then restart the
+stream, virtual camera and OCR. This keeps the current YouTube IDs/QR links,
+scores, chat readers and forwarding deduplication. It skips the normal Stop
+cooldown, farewell and new-stream announcements, and makes no YouTube API changes.
+Stream controls are locked during recovery, including on reconnected panels.
+If recovery fails, retry **重開直播** or use **停播** for full cleanup. A full Stop
+request cancels recovery and waits for any in-flight OBS launch before cleanup.
+This is a quick encoder restart: if OBS takes too long to recover, YouTube can
+still end the broadcasts; recovery never creates replacement broadcasts.
+
 On the touch panel (`control.html`), double-tap the Gundam icon to show the
 Wi-Fi QR code. Scan it to join the hidden **LCKDX** network, or connect manually
 using WPA/WPA2 and password **clsclscls**. The dialog hides automatically after

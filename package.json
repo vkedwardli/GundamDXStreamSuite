@@ -8,7 +8,7 @@
     "start": "node index.js",
     "dev": "NODE_ENV=development node index.js",
     "test:whatsapp": "node test-whatsapp.js",
-    "test:whatsapp:unit": "node --experimental-vm-modules --test whatsapp.test.js whatsappYouTubeBridge.test.js youtubeChatDelivery.test.js chatService.test.js diagnose-youtube.test.js streamStartup.test.js streamAnnouncements.test.js shutdown.test.js morningWeather.test.js hkoWeather.test.js",
+    "test:whatsapp:unit": "node --experimental-vm-modules --test whatsapp.test.js whatsappYouTubeBridge.test.js youtubeChatDelivery.test.js chatService.test.js diagnose-youtube.test.js streamStartup.test.js streamShutdown.test.js streamRestart.test.js obsService.test.js systemUtils.test.js streamAnnouncements.test.js shutdown.test.js morningWeather.test.js hkoWeather.test.js",
     "diagnose:youtube": "node diagnose-youtube.js"
   },
   "dependencies": {

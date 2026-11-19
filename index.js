@@ -23,6 +23,7 @@ import {
   obs, // direct obs instance for some specific calls if needed outside service
   obsConnect,
   IsLiveStreaming,
+  getOBSStreamingState,
   startOBSStreamingAndRecognition,
   stopOBSStreamingAndRecognition,
   launchOBS,
@@ -56,7 +57,7 @@ import {
   restoreScoreFromArgs,
   stopRecognizeBattleResults,
 } from "./score.js";
-import { installShutdownHandlers } from "./shutdown.js";
+import { installShutdownHandlers, withTimeout } from "./shutdown.js";
 import { announceStreamLinks } from "./streamAnnouncements.js";
 import { startWeatherAnnouncements } from "./morningWeather.js";
 import { startTimeAnnouncer } from "./timeAnnouncer.js";
@@ -71,6 +72,12 @@ let megaphoneState = Megaphone.ENABLED;
 let blockStartStreamingUntil = 0;
 let currentBroadcastIds = []; // To store IDs of current streams
 let currentStreamType = null; // 'public' or 'unlisted'
+let stopStreamingPromise = null;
+let startStreamingPromise = null;
+let restartStreamingPromise = null;
+let restartIncomplete = false;
+let shutdownIncomplete = false;
+let streamGeneration = 0;
 
 const whatsappYouTubeBridge = new WhatsAppYouTubeBridge({
   directory: path.join(whatsappClient.storeDir, "youtube-outbox"),
@@ -130,12 +137,9 @@ function handleClientConnection(client, io) {
   // Emit initial status to newly connected client
   IsLiveStreaming()
     .then((isStreaming) => {
-      client.emit("isStreaming", {
-        isStreaming,
-        streamType: currentStreamType,
-      });
+      client.emit("isStreaming", streamingStatus(isStreaming));
       client.emit("megaphoneStatus", megaphoneState);
-      if (isStreaming && currentBroadcastIds.length === 2) {
+      if (currentBroadcastIds.length === 2) {
         client.emit("streamUrls", {
           url1: `https://youtu.be/${currentBroadcastIds[0]}`,
           url2: `https://youtu.be/${currentBroadcastIds[1]}`,
@@ -159,11 +163,13 @@ function handleClientConnection(client, io) {
     await stopStreaming(io); // Pass io
   });
 
+  client.on("restartStreaming", async () => {
+    console.log("Socket.IO: Received restartStreaming request");
+    await restartStreaming(io);
+  });
+
   client.on("getStreamingStatus", async () => {
-    io.emit("isStreaming", {
-      isStreaming: await IsLiveStreaming(),
-      streamType: currentStreamType,
-    });
+    io.emit("isStreaming", streamingStatus(await IsLiveStreaming()));
   });
 
   client.on("toggleMegaphone", async () => {
@@ -244,9 +250,36 @@ internalEvents.on("sendYouTubeMessage", async (message) => {
 });
 
 // --- Main Streaming Logic ---
-async function startStreaming({ isPublic, retryCount = 0, io }) {
+function streamingStatus(isStreaming) {
+  return {
+    isStreaming: shutdownIncomplete || restartIncomplete || restartStreamingPromise ? null : isStreaming,
+    streamType: currentStreamType,
+    shutdownIncomplete,
+    restarting: Boolean(restartStreamingPromise),
+    restartIncomplete,
+    canRestart: !shutdownIncomplete && currentBroadcastIds.length === 2 &&
+      (isStreaming === true || restartIncomplete),
+  };
+}
+
+function startStreaming(options) {
+  if (restartStreamingPromise || restartIncomplete) {
+    options.io.emit("status", "OBS recovery is pending. Retry 重開直播 or use Stop before starting a new session.");
+    options.io.emit("isStreaming", streamingStatus(null));
+    return Promise.resolve();
+  }
+  if (startStreamingPromise) return startStreamingPromise;
+  startStreamingPromise = performStartStreaming(options).finally(() => { startStreamingPromise = null; });
+  return startStreamingPromise;
+}
+
+async function performStartStreaming({ isPublic, retryCount = 0, io, generation }) {
   const MAX_RETRIES = 3;
-  currentStreamType = isPublic ? "public" : "unlisted";
+  if (stopStreamingPromise || shutdownIncomplete) {
+    io.emit("status", "Shutdown is incomplete. Wait for Stop to finish, or retry Stop before starting.");
+    io.emit("isStreaming", { isStreaming: null, streamType: currentStreamType, shutdownIncomplete: true });
+    return;
+  }
 
   if (Date.now() < blockStartStreamingUntil) {
     io.emit("isStreaming", { isStreaming: false, streamType: null });
@@ -262,11 +295,16 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
     });
     return;
   }
+  const startupGeneration = generation ?? ++streamGeneration;
+  const isCurrent = () => startupGeneration === streamGeneration;
+  if (!isCurrent()) return;
+  currentStreamType = isPublic ? "public" : "unlisted";
 
   let broadcastIds = [];
   let announceNewStreams = false;
 
   const obsLaunched = await launchOBS(); // Ensures OBS is running and connected
+  if (!isCurrent()) return;
   if (!obsLaunched) {
     console.error("OBS failed to launch or connect. Aborting startStreaming.");
     io.emit("isStreaming", { isStreaming: false, streamType: null }); // Ensure client UI reflects this
@@ -274,10 +312,12 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
   }
 
   broadcastIds = await checkLiveStreams("active");
+  if (!isCurrent()) return;
   if (broadcastIds.length > 0) {
     console.log("Live stream(s) already active:", broadcastIds);
   } else {
     broadcastIds = await checkLiveStreams("upcoming");
+    if (!isCurrent()) return;
     if (broadcastIds.length > 0) {
       console.log("Upcoming stream(s) already scheduled:", broadcastIds);
     } else {
@@ -289,6 +329,7 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
           (faction) => createScheduledLiveStream({ faction, isPublic }),
         );
         const broadcastResults = await Promise.all(broadcastPromises);
+        if (!isCurrent()) return;
 
         const federationResult = broadcastResults.find(
           (result) => result.faction === Faction.FEDERATION,
@@ -314,6 +355,7 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
             opponentBroadcastId: federationResult.broadcastId,
           }),
         ]);
+        if (!isCurrent()) return;
         console.log(
           "Successfully created and updated new streams:",
           broadcastIds,
@@ -328,6 +370,7 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
     }
   }
 
+  if (!isCurrent()) return;
   if (broadcastIds.length !== 2) {
     console.error(
       "Failed to obtain 2 valid broadcast IDs. Current IDs:",
@@ -340,7 +383,8 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
         `Retrying stream setup (Attempt ${retryCount + 1}/${MAX_RETRIES})`,
       );
       await scheduler.wait(5000); // Wait before retrying
-      return startStreaming({ isPublic, retryCount: retryCount + 1, io });
+      if (!isCurrent()) return;
+      return performStartStreaming({ isPublic, retryCount: retryCount + 1, io, generation: startupGeneration });
     } else {
       console.error("Max retries reached. Failed to set up live streams.");
       io.emit("isStreaming", { isStreaming: false, streamType: null });
@@ -351,34 +395,18 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
   currentBroadcastIds = [...broadcastIds]; // Store current IDs
 
   await scheduler.wait(2000); // Short delay before starting OBS stream
+  if (!isCurrent()) return;
   await hideZDXPopup();
+  if (!isCurrent()) return;
 
-  // Define what happens if the system detects 10 minutes of total inactivity.
-  // This is passed as a callback to the OCR monitoring system.
-  const handleIdleShutdown = async () => {
-    console.log("Idle shutdown triggered via OCR logic.");
-    const idleCloseMessage = "機台閒置時間過長，直播即將關閉，多謝收睇。";
-
-    // 1. Final YouTube Comment
-    await sendToFederationLiveChat(idleCloseMessage);
-
-    // 2. Final TTS Announcement (Public only)
-    if (isPublic) {
-      await textToSpeech({
-        text: idleCloseMessage,
-        model: TTSModel.AZURE_AI,
-        voiceID: "zh-HK-HiuMaanNeural",
-      });
-    }
-
-    // 3. Grace period for sound to finish and YouTube chat to sync (approx 5s)
-    await scheduler.wait(5000);
-
-    // 4. Perform full cleanup and stop streaming
-    await stopStreaming(io);
-  };
-
-  await startOBSStreamingAndRecognition(handleIdleShutdown, isPublic); // From obsService
+  const started = await startOBSStreamingAndRecognition(createIdleShutdown(io, isPublic, isCurrent), isPublic, isCurrent);
+  if (!isCurrent()) return;
+  if (started === false) {
+    shutdownIncomplete = true;
+    io.emit("status", "OBS startup failed. Use Stop to complete cleanup before trying again.");
+    io.emit("isStreaming", streamingStatus(null));
+    return;
+  }
   startOverlay();
 
   console.log(
@@ -399,89 +427,198 @@ async function startStreaming({ isPublic, retryCount = 0, io }) {
     url1: `https://youtu.be/${broadcastIds[0]}`,
     url2: `https://youtu.be/${broadcastIds[1]}`,
   });
-  io.emit("isStreaming", { isStreaming: true, streamType: currentStreamType });
+  io.emit("isStreaming", streamingStatus(true));
 
   if (announceNewStreams) {
     // Announcements are optional; WhatsApp auth/sends must not gate OCR or chat.
     void announceStreamLinks({
       broadcastIds: [...broadcastIds],
       groupId: isPublic ? WA_PUBLIC_GROUP_ID : WA_TEST_GROUP_ID,
-      isCurrent: () => currentBroadcastIds.join(",") === broadcastIds.join(","),
+      isCurrent: () => isCurrent() && currentBroadcastIds.join(",") === broadcastIds.join(","),
       isReady: () => whatsappClient.ready,
       send: sendTextToDXGroup,
     });
   }
 
   await scheduler.wait(15000); // Wait for streams to be fully live before starting chat
+  if (!isCurrent()) return;
   startLiveChatAndViewerCount({ broadcastIds, io, isPublic });
 }
 
-async function stopStreaming(io) {
-  // io might be needed for emitting status during stop
-  try {
-    // 0. Guard: Check if we are actually streaming
-    const isActuallyStreaming = await IsLiveStreaming();
-    if (!isActuallyStreaming) {
-      console.log("Stop requested, but OBS is not streaming. Skipping shutdown sequence.");
-      return;
-    }
+function createIdleShutdown(io, isPublic, isCurrent) {
+  return async () => {
+    if (!isCurrent()) return;
+    console.log("Idle shutdown triggered via OCR logic.");
+    const idleCloseMessage = "機台閒置時間過長，直播即將關閉，多謝收睇。";
 
-    const now = new Date();
-    const hour = now.getHours();
-    // Check if the time is between 10 PM (22) and 3 AM (exclusive of 3, so 22, 23, 0, 1, 2)
-    const isLateNight = hour >= 22 || hour < 3;
+    // 1. Final YouTube Comment
+    await sendToFederationLiveChat(idleCloseMessage);
+    if (!isCurrent()) return;
 
-    if (isLateNight) {
-      const farewellMessage = "歡樂今宵再會，各位觀眾……晚安";
-      console.log(
-        "Late night stop detected. Playing and sending announcement.",
-      );
-
-      // 1. Final YouTube Comment
-      await sendToFederationLiveChat(farewellMessage);
-
-      // 2. Play the announcement via TTS
+    // 2. Final TTS Announcement (Public only)
+    if (isPublic) {
       await textToSpeech({
-        text: farewellMessage,
+        text: idleCloseMessage,
         model: TTSModel.AZURE_AI,
         voiceID: "zh-HK-HiuMaanNeural",
       });
+    }
 
-      // 3. Adding a delay to ensure the sound finishes and YouTube chat syncs (approx 5s)
+    // 3. Grace period for sound to finish and YouTube chat to sync (approx 5s)
+    await scheduler.wait(5000);
+    if (!isCurrent()) return;
+
+    // 4. Perform full cleanup and stop streaming
+    await stopStreaming(io);
+  };
+}
+
+function restartStreaming(io) {
+  if (restartStreamingPromise) return restartStreamingPromise;
+  if (stopStreamingPromise || shutdownIncomplete || currentBroadcastIds.length !== 2) {
+    io.emit("status", "重開直播 requires the current broadcasts and a completed startup. Finish Stop first if shutdown failed.");
+    io.emit("isStreaming", streamingStatus(null));
+    return Promise.resolve(false);
+  }
+  const previousGeneration = streamGeneration;
+  restartStreamingPromise = (async () => {
+    // Let an existing startup finish before taking ownership of OBS/OCR.
+    await startStreamingPromise;
+    if (previousGeneration !== streamGeneration || shutdownIncomplete || currentBroadcastIds.length !== 2) return false;
+    const isPublic = currentStreamType === "public";
+    const state = await getOBSStreamingState({ reconnect: true });
+    if (previousGeneration !== streamGeneration) return false;
+    if (state !== true && !restartIncomplete) {
+      io.emit("status", "OBS is not confirmed streaming. Check OBS before using 重開直播.");
+      return false;
+    }
+    const generation = ++streamGeneration;
+    const isCurrent = () => generation === streamGeneration;
+    restartIncomplete = true;
+    io.emit("status", "重開直播：正在停止直播及虛擬鏡頭，關閉並重新啟動 OBS…");
+    const stopped = await stopOBSStreamingAndRecognition();
+    if (!isCurrent()) return false;
+    // Process exit also confirms stream/camera release when StopStream failed.
+    const closed = await closeOBS();
+    if (!isCurrent()) return false;
+    if (!closed) throw new Error("Could not confirm OBS process exit. A second OBS instance will not be launched.");
+    if (!stopped?.recognitionStopped) throw new Error("Battle recognition did not stop; retry recovery.");
+    if (!await launchOBS()) throw new Error("OBS could not be restarted or connected.");
+    if (!isCurrent()) return false;
+    const started = await startOBSStreamingAndRecognition(
+      createIdleShutdown(io, isPublic, isCurrent), isPublic, isCurrent, { recovery: true });
+    if (!isCurrent()) return false;
+    if (started !== true) throw new Error("OBS stream or virtual camera could not be restarted.");
+    restartIncomplete = false;
+    io.emit("status", "重開直播完成：OBS 直播及虛擬鏡頭已恢復，沿用原有 YouTube 直播連結。");
+    return true;
+  })().catch(error => {
+    console.error("OBS recovery failed:", error);
+    io.emit("status", `重開直播失敗：${error.message} 可重試重開直播，或按停播完成清理。`);
+    return false;
+  }).finally(async () => {
+    const active = stopStreamingPromise ? null : await IsLiveStreaming();
+    restartStreamingPromise = null;
+    if (!stopStreamingPromise) io.emit("isStreaming", streamingStatus(active));
+  });
+  io.emit("isStreaming", streamingStatus(null));
+  return restartStreamingPromise;
+}
+
+function stopStreaming(io) {
+  if (stopStreamingPromise) return stopStreamingPromise;
+  // Invalidate delayed startup work before awaiting anything during shutdown.
+  streamGeneration++;
+  const recovery = restartStreamingPromise;
+  stopStreamingPromise = (async () => {
+    // Stop cancels recovery immediately, then waits for any in-flight process
+    // launch/start request before doing the final cleanup.
+    await recovery;
+    restartIncomplete = false;
+    return performStopStreaming(io);
+  })().finally(() => {
+    blockStartStreamingUntil = Date.now() + 60 * 1000;
+    stopStreamingPromise = null;
+  });
+  return stopStreamingPromise;
+}
+
+async function performStopStreaming(io) {
+  const broadcastIds = currentBroadcastIds;
+  currentBroadcastIds = []; // Stop accepting commands or sending queued stream links.
+  currentStreamType = null;
+  try {
+    const state = await getOBSStreamingState();
+    const now = new Date();
+    const hour = now.getHours();
+    const isLateNight = hour >= 22 || hour < 3;
+    if (state === true && isLateNight) {
+      const farewellMessage = "歡樂今宵再會，各位觀眾……晚安";
+      console.log("Late night stop detected. Playing and sending announcement.");
+      // Optional announcements must not prevent shutdown on a service failure.
+      if (broadcastIds.length) {
+        await withTimeout(() => sendLiveChatMessage(broadcastIds[0], farewellMessage),
+          15000, "Farewell comment").catch(error =>
+          console.error("Farewell comment failed:", error.message));
+      }
+      await withTimeout(() => textToSpeech({ text: farewellMessage,
+        model: TTSModel.AZURE_AI, voiceID: "zh-HK-HiuMaanNeural" }),
+      20000, "Farewell speech");
       await scheduler.wait(5000);
     }
-
-    blockStartStreamingUntil = Date.now() + 60 * 1000; // Block for 60 seconds
-    megaphoneState = Megaphone.ENABLED; // Reset megaphone state
-    currentStreamType = null; // Reset stream type
-    updateMegaphoneState(megaphoneState);
-    if (io) io.emit("megaphoneStatus", megaphoneState);
-
-    await stopOBSStreamingAndRecognition(); // From obsService
-    stopLiveChatAndViewerCount(); // From chatService
-    clearLiveChatCache();
-    stopOverlay();
-
-    currentBroadcastIds = []; // Clear current broadcast IDs
-    if (io) {
-      io.emit("totalviewers", 0); // Reset viewers
-      io.emit("isStreaming", { isStreaming: false, streamType: null });
-    }
-
-    closeOBS();
-
-    console.log("Streaming fully stopped and services cleaned up.");
   } catch (error) {
-    console.error("Error during stopStreaming:", error);
+    console.error("Shutdown announcement/status check failed; continuing cleanup:", error.message);
   }
+
+  const cleanups = [
+    ["chat and viewer polling", () => stopLiveChatAndViewerCount()],
+    ["YouTube chat cache", () => clearLiveChatCache()],
+    ["scoreboard overlay", () => stopOverlay()],
+    ["OBS and battle recognition", () => stopOBSStreamingAndRecognition()],
+  ];
+  const results = await Promise.allSettled(cleanups.map(([, cleanup]) => Promise.resolve().then(cleanup)));
+  results.forEach((result, index) => {
+    if (result.status === "rejected") console.error(`Failed to stop ${cleanups[index][0]}:`, result.reason);
+  });
+  const obsResult = results[3].status === "fulfilled" ? results[3].value : null;
+  let closed = false;
+  try {
+    closed = await closeOBS();
+  } catch (error) {
+    console.error("Error closing OBS:", error.message);
+  }
+  const streamStopped = obsResult?.streamStopped === true || closed === true;
+  const cleanedUp = results.every(result => result.status === "fulfilled") &&
+    obsResult?.recognitionStopped === true;
+  shutdownIncomplete = !streamStopped || !cleanedUp || closed !== true;
+
+  megaphoneState = Megaphone.ENABLED;
+  try {
+    updateMegaphoneState(megaphoneState);
+    if (io) {
+      io.emit("megaphoneStatus", megaphoneState);
+      io.emit("totalviewers", 0);
+      io.emit("isStreaming", { isStreaming: streamStopped ? false : null,
+        streamType: null, shutdownIncomplete });
+    }
+  } catch (error) {
+    console.error("Error reporting shutdown state:", error.message);
+  }
+  const status = shutdownIncomplete
+    ? "Shutdown incomplete. Retry Stop or check OBS manually; see errors above."
+    : "Streaming stopped and local services cleaned up.";
+  if (shutdownIncomplete) console.error(status);
+  else console.log(status);
+  if (io) io.emit("status", status);
+  return { streamStopped, cleanedUp, complete: !shutdownIncomplete };
 }
 
 // --- Scheduled Tasks ---
 schedule.scheduleJob("10 2 * * *", async () => {
   console.log("Scheduled task: Stopping stream at 02:10 AM");
   if (socketIoInstance) {
-    await stopStreaming(socketIoInstance);
-    socketIoInstance.emit("status", "Streaming stopped by schedule");
+    const result = await stopStreaming(socketIoInstance);
+    if (result.complete) socketIoInstance.emit("status", "Streaming stopped by schedule");
   } else {
     console.error(
       "Scheduled task: io instance not available to stop streaming.",

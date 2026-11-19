@@ -9,6 +9,7 @@ import test from "node:test";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import vm from "node:vm";
+import { withTimeout } from "./shutdown.js";
 
 async function fixture(args = [], { directory, fileSystem = fs } = {}) {
   const broadcasts = [];
@@ -274,6 +275,7 @@ test("OBS's actual streaming status selects restore before recognition starts", 
         stopRecognizeBattleResults: async () => calls.push("cleanup"),
       },
       "./serverSetup.js": { io: { emit: noop } },
+      "./shutdown.js": { withTimeout },
     };
     const context = vm.createContext({ console: { log: noop, error: noop } });
     const module = new vm.SourceTextModule(await readFile(new URL("./obsService.js", import.meta.url), "utf8"), { context });

@@ -5,6 +5,7 @@ import { exec, spawn } from "child_process";
 import { promisify } from "util";
 import { scheduler } from "node:timers/promises";
 import { isDev } from "./config.js";
+import { withTimeout } from "./shutdown.js";
 import {
   setupLiveChatForFaction,
   startLiveChatAndViewerCount,
@@ -206,14 +207,26 @@ export function startOverlay() {
   });
 }
 
-export function stopOverlay() {
+export async function stopOverlay() {
   if (!overlayProcess) return;
 
   console.log("Stopping scoreboard overlay...");
+  const stopping = overlayProcess;
   if (os.platform() === "win32") {
-    exec(`taskkill /pid ${overlayProcess.pid} /f /t`);
+    // Await the result so shutdown can report failure and allow a retry.
+    await execPromise(`taskkill /pid ${stopping.pid} /f /t`, { timeout: 5000 });
   } else {
-    overlayProcess.kill();
+    let onClose;
+    try {
+      await withTimeout(() => new Promise((resolve, reject) => {
+        if (stopping.exitCode !== null) return resolve();
+        onClose = resolve;
+        stopping.once("close", onClose);
+        if (!stopping.kill()) reject(new Error("Could not stop the scoreboard overlay."));
+      }), 5000, "Scoreboard overlay shutdown");
+    } finally {
+      if (onClose) stopping.removeListener("close", onClose);
+    }
   }
-  overlayProcess = null;
+  if (overlayProcess === stopping) overlayProcess = null;
 }

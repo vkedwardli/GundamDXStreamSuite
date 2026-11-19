@@ -195,14 +195,16 @@
       }
       .dialog-buttons {
         display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
         justify-content: space-around;
       }
       .dialog-buttons button {
         padding: 30px;
         font-size: 36px;
         min-height: 120px;
-        width: 40%;
-        margin: 40px;
+        flex: 1 1 200px;
+        margin: 0;
       }
       .dialog-buttons .confirm-btn {
         background: #007bff;
@@ -211,12 +213,19 @@
       .dialog-buttons .confirm-btn:active {
         background: #0056b3;
       }
-      .dialog-buttons .cancel-btn {
+      .dialog-buttons .stop-action {
         background: #dc3545;
         border-color: #a71d2a;
       }
-      .dialog-buttons .cancel-btn:active {
+      .dialog-buttons .stop-action:active {
         background: #a71d2a;
+      }
+      .dialog-buttons .cancel-btn {
+        background: #555555;
+        border-color: #444444;
+      }
+      .dialog-buttons .cancel-btn:active {
+        background: #444444;
       }
 
       #wifiDialog {
@@ -338,6 +347,7 @@
           <p id="confirmMessage"></p>
           <div class="dialog-buttons">
             <button class="confirm-btn" id="confirmBtn">Confirm</button>
+            <button class="confirm-btn" id="restartBtn" style="display: none">重開直播</button>
             <button class="cancel-btn" id="cancelBtn">Cancel</button>
           </div>
         </div>
@@ -431,14 +441,30 @@
       const confirmDialog = document.getElementById("confirmDialog");
       const confirmMessage = document.getElementById("confirmMessage");
       const confirmBtn = document.getElementById("confirmBtn");
+      const restartBtn = document.getElementById("restartBtn");
       const cancelBtn = document.getElementById("cancelBtn");
       const megaphoneBtn = document.getElementById("megaphone");
       let pendingAction = null;
       let activeStreamType = null; // 'public' or 'unlisted'
+      let canRestartStream = false;
 
       const originalUnlistedBtnHTML = startUnlistedBtn.innerHTML;
 
-      function updateButtonStates({ isStreaming, streamType }) {
+      function updateButtonStates({ isStreaming, streamType, shutdownIncomplete,
+        restarting = false, restartIncomplete = false, canRestart = false }) {
+        canRestartStream = canRestart && !restarting && !shutdownIncomplete;
+        if (restarting) {
+          stopStreamingBtn.disabled = true;
+          startPublicBtn.disabled = true;
+          startUnlistedBtn.disabled = true;
+          return;
+        }
+        if (shutdownIncomplete || restartIncomplete) {
+          stopStreamingBtn.disabled = false; // Allow retrying a failed stop.
+          startPublicBtn.disabled = true;
+          startUnlistedBtn.disabled = true;
+          return;
+        }
         if (isStreaming) {
           stopStreamingBtn.disabled = false;
           if (streamType === "public") {
@@ -470,6 +496,9 @@
 
       // Show confirmation dialog
       function showConfirmDialog(message, action) {
+        confirmBtn.textContent = "Confirm";
+        confirmBtn.classList.remove("stop-action");
+        restartBtn.style.display = "none";
         confirmMessage.textContent = message;
         pendingAction = action;
         confirmDialog.style.display = "flex";
@@ -478,6 +507,7 @@
       // Hide confirmation dialog
       function hideConfirmDialog() {
         confirmDialog.style.display = "none";
+        restartBtn.style.display = "none";
         pendingAction = null;
       }
 
@@ -502,11 +532,19 @@
       }
 
       function stopStreaming() {
-        showConfirmDialog("收皮？", () => {
+        showConfirmDialog(canRestartStream
+          ? "停播定重開？"
+          : "收皮？", () => {
           activeStreamType = null;
           socket.emit("stopStreaming");
-          updateButtonStates({ isStreaming: false });
+          // Wait for the server's confirmed result before showing stopped.
+          stopStreamingBtn.disabled = true;
+          startPublicBtn.disabled = true;
+          startUnlistedBtn.disabled = true;
         });
+        confirmBtn.textContent = "停播";
+        confirmBtn.classList.add("stop-action");
+        restartBtn.style.display = canRestartStream ? "inline-block" : "none";
       }
 
       // Receive console messages from server
@@ -548,10 +586,11 @@
       socket.on("isStreaming", (data) => {
         // It's safer to check if data is an object before destructuring
         if (data && typeof data === "object") {
-          const { isStreaming, streamType } = data;
+          const { isStreaming, streamType, restarting, restartIncomplete } = data;
           activeStreamType = streamType;
-          updateButtonStates({ isStreaming, streamType });
-          if (isStreaming == false) {
+          updateButtonStates(data);
+          if (restarting) hideConfirmDialog();
+          if (isStreaming == false && !restarting && !restartIncomplete) {
             qrCode1.innerHTML = "Federation QR";
             qrCode2.innerHTML = "Zeon QR";
           }
@@ -593,6 +632,13 @@
 
       cancelBtn.addEventListener("click", () => {
         hideConfirmDialog();
+      });
+
+      restartBtn.addEventListener("click", () => {
+        if (!canRestartStream) return;
+        hideConfirmDialog();
+        updateButtonStates({ restarting: true });
+        socket.emit("restartStreaming");
       });
 
       document.addEventListener("visibilitychange", () => {
